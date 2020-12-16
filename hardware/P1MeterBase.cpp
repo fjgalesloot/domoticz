@@ -280,12 +280,11 @@ bool P1MeterBase::MatchLine()
 				if (m_voltagel3 != -1) {
 					SendVoltageSensor(0, 3, 255, m_voltagel3, "Voltage L3");
 				}
-				/* The ampere is rounded to whole numbers and therefor not accurate enough
+				//The ampere is rounded to whole numbers and therefor not accurate enough
 				//we could calculate this ourselfs I=P/U I1=(m_power.powerusage1/m_voltagel1)
 				if (m_bReceivedAmperage) {
 					SendCurrentSensor(1, 255, m_amperagel1, m_amperagel2, m_amperagel3, "Amperage" );
-				}
-				*/
+				}				
 				if (m_powerusel1 != -1) {
 					SendWattMeter(0, 1, 255, m_powerusel1, "Usage L1");
 				}
