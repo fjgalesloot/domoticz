@@ -31,6 +31,7 @@
 #include "../notifications/NotificationHelper.h"
 #include "appversion.h"
 #include "localtime_r.h"
+#include "SignalHandler.h"
 
 #if defined WIN32
 	#include "../msbuild/WindowsHelper.h"
@@ -42,31 +43,6 @@
 	#include <errno.h>
 	#include <fcntl.h>
 	#include <string.h> 
-#endif
-
-#ifdef HAVE_EXECINFO_H
-#include <execinfo.h>
-static void dumpstack(void) {
-	// Notes :
-	// The following code does needs -rdynamic compile option.not print full backtrace.
-	// To have a full backtrace you need to :
-	// - compile with -g -rdynamic options
-	// - active core dump using "ulimit -c unlimited" before starting daemon
-	// - use gdb to analyze the core dump
-	void *addrs[128];
-	int n, count = backtrace(addrs, 128);
-	char** symbols = backtrace_symbols(addrs, count);
-
-	if (symbols) {
-		for (n = 0; n < count; n++) {
-			_log.Log(LOG_ERROR, "  %s", symbols[n]);
-		}
-		free(symbols);
-	}
-}
-#else
-static void dumpstack(void) {
-}
 #endif
 
 const char *szHelp =
@@ -156,11 +132,13 @@ std::string szInternalCurrentCommand = "";
 
 
 std::string szAppVersion="???";
+int iAppRevision=0;
 std::string szAppHash="???";
 std::string szAppDate="???";
 std::string szPyVersion="None";
 int ActYear;
 time_t m_StartTime=time(NULL);
+std::string szRandomUUID = "???";
 
 MainWorker m_mainworker;
 CLogger _log;
@@ -173,13 +151,15 @@ bool g_bStopApplication = false;
 bool g_bUseSyslog = false;
 bool g_bRunAsDaemon = false;
 bool g_bDontCacheWWW = false;
-_eWebCompressionMode g_wwwCompressMode = http::server::WWW_USE_GZIP;
+http::server::_eWebCompressionMode g_wwwCompressMode = http::server::WWW_USE_GZIP;
 bool g_bUseUpdater = true;
 http::server::server_settings webserver_settings;
 #ifdef WWW_ENABLE_SSL
 http::server::ssl_server_settings secure_webserver_settings;
 #endif
 bool bStartWebBrowser = true;
+bool g_bUseWatchdog = true;
+bool g_bIsWSL = false;
 
 #define DAEMON_NAME "domoticz"
 #define PID_FILE "/var/run/domoticz.pid" 
@@ -187,44 +167,6 @@ bool bStartWebBrowser = true;
 std::string daemonname = DAEMON_NAME;
 std::string pidfile = PID_FILE;
 int pidFilehandle = 0;
-
-int fatal_handling = 0;
-
-void signal_handler(int sig_num)
-{
-	switch(sig_num)
-	{
-#ifndef WIN32
-	case SIGHUP:
-		if (!logfile.empty())
-			_log.SetOutputFile(logfile.c_str());
-		break;
-#endif
-	case SIGINT:
-	case SIGTERM:
-#ifndef WIN32
-		if ((g_bRunAsDaemon)||(g_bUseSyslog))
-			syslog(LOG_INFO, "Domoticz is exiting...");
-#endif
-		g_bStopApplication = true;
-		break;
-	case SIGSEGV:
-	case SIGILL:
-	case SIGABRT:
-	case SIGFPE:
-		if (fatal_handling) {
-			_log.Log(LOG_ERROR, "Domoticz received fatal signal %d while backtracing !...", sig_num);
-			exit(EXIT_FAILURE);
-		}
-		fatal_handling = 1;
-		_log.Log(LOG_ERROR, "Domoticz received fatal signal %d !...", sig_num);
-		dumpstack();
-		// re-raise signal to enforce core dump
-		signal(sig_num, SIG_DFL);
-		raise(sig_num);
-		break;
-	} 
-}
 
 #ifndef WIN32
 void daemonShutdown()
@@ -251,9 +193,9 @@ void daemonize(const char *rundir, const char *pidfile)
 	sigprocmask(SIG_BLOCK, &newSigSet, NULL);   /* Block the above specified signals */
 
 	/* Set up a signal handler */
-	newSigAction.sa_handler = signal_handler;
+	newSigAction.sa_sigaction = signal_handler;
 	sigemptyset(&newSigAction.sa_mask);
-	newSigAction.sa_flags = 0;
+	newSigAction.sa_flags = SA_SIGINFO;
 
 	/* Signals to handle */
 	sigaction(SIGTERM, &newSigAction, NULL);    // catch term signal
@@ -261,6 +203,7 @@ void daemonize(const char *rundir, const char *pidfile)
 	sigaction(SIGSEGV, &newSigAction, NULL);    // catch segmentation fault signal
 	sigaction(SIGABRT, &newSigAction, NULL);    // catch abnormal termination signal
 	sigaction(SIGILL,  &newSigAction, NULL);    // catch invalid program image
+	sigaction(SIGUSR1, &newSigAction, NULL);    // catch SIGUSR1 (used by watchdog)
 #ifndef WIN32
 	sigaction(SIGHUP,  &newSigAction, NULL);    // catch HUP, for log rotation
 #endif
@@ -273,7 +216,7 @@ void daemonize(const char *rundir, const char *pidfile)
 		/* Could not fork */
 		exit(EXIT_FAILURE);
 	}
-
+    
 	if (pid > 0)
 	{
 		/* Child created ok, so exit parent process */
@@ -303,7 +246,7 @@ void daemonize(const char *rundir, const char *pidfile)
 
 	/* write pid to lockfile */
 	int twrite=write(pidFilehandle, str, strlen(str));
-	if (twrite != strlen(str))
+	if (twrite != int(strlen(str)))
 	{
 		syslog(LOG_INFO, "Could not write to lock file %s, exiting", pidfile);
 		exit(EXIT_FAILURE);
@@ -503,9 +446,8 @@ static size_t getExecutablePathName(char* pathName, size_t pathNameCapacity)
 
 void GetAppVersion()
 {
-	std::stringstream sstr;
-	sstr << VERSION_STRING << APPVERSION;
-	szAppVersion = sstr.str();
+	szAppVersion = VERSION_STRING;
+	iAppRevision = APPVERSION;
 	szAppHash = APPHASH;
 	char szTmp[200];
 	struct tm ltime;
@@ -717,9 +659,11 @@ bool ParseConfigFile(const std::string &szConfigFile)
 		}
 		else if (szFlag == "app_path") {
 			szStartupFolder = sLine;
+			FixFolderEnding(szStartupFolder);
 		}
 		else if (szFlag == "userdata_path") {
 			szUserDataFolder = sLine;
+			FixFolderEnding(szUserDataFolder);
 		}
 		else if (szFlag == "daemon_name") {
 			daemonname = sLine;
@@ -744,6 +688,8 @@ void DisplayAppVersion()
 	_log.Log(LOG_STATUS, "Domoticz V%s (c)2012-%d GizMoCuz", szAppVersion.c_str(), ActYear);
 	_log.Log(LOG_STATUS, "Build Hash: %s, Date: %s", szAppHash.c_str(), szAppDate.c_str());
 }
+
+time_t m_LastHeartbeat = 0;
 
 #if defined WIN32
 int WINAPI WinMain(_In_ HINSTANCE hInstance,_In_opt_ HINSTANCE hPrevInstance,_In_ LPSTR lpCmdLine,_In_ int nShowCmd)
@@ -805,6 +751,7 @@ int main(int argc, char**argv)
 				_log.Log(LOG_ERROR, "Please specify an output log file");
 				return 1;
 			}
+			logfile = cmdLine.GetSafeArgument("-log", 0, "domoticz.log");
 		}
 		if (cmdLine.HasSwitch("-approot"))
 		{
@@ -814,10 +761,15 @@ int main(int argc, char**argv)
 				return 1;
 			}
 			std::string szroot = cmdLine.GetSafeArgument("-approot", 0, "");
-			if (szroot.size() != 0)
+			if (szroot.size() != 0) {
 				szStartupFolder = szroot;
+				FixFolderEnding(szStartupFolder);
+			}
 		}
 	}
+
+	if (!logfile.empty())
+		_log.SetOutputFile(logfile.c_str());
 
 	if (szStartupFolder.empty())
 	{
@@ -848,6 +800,14 @@ int main(int argc, char**argv)
 #endif
 #endif
 	}
+#if defined(__linux__)
+	g_bIsWSL = IsWSL();
+#endif
+
+	/* call srand once for the entire app */
+	std::srand((unsigned int)std::time(nullptr));
+	szRandomUUID = GenerateUUID();    
+
 	GetAppVersion();
 	DisplayAppVersion();
 
@@ -870,7 +830,8 @@ int main(int argc, char**argv)
 		}
 		if ((cmdLine.HasSwitch("-version")) || (cmdLine.HasSwitch("--version")))
 		{
-			DisplayAppVersion();
+			//Application version is already displayed
+			//DisplayAppVersion();
 			return 0;
 		}
 		if (cmdLine.HasSwitch("-userdata"))
@@ -882,7 +843,10 @@ int main(int argc, char**argv)
 			}
 			std::string szroot = cmdLine.GetSafeArgument("-userdata", 0, "");
 			if (szroot.size() != 0)
+			{
 				szUserDataFolder = szroot;
+				FixFolderEnding(szUserDataFolder);
+			}
 		}
 		if (cmdLine.HasSwitch("-startupdelay"))
 		{
@@ -1171,9 +1135,9 @@ int main(int argc, char**argv)
 
 	if ((g_bRunAsDaemon)||(g_bUseSyslog))
 	{
-		int idx, logfacility = 0;
+		int logfacility = 0;
 
-		for ( idx = 0; idx < sizeof(facilities)/sizeof(facilities[0]); idx++ ) 
+		for ( size_t idx = 0; idx < sizeof(facilities)/sizeof(facilities[0]); idx++ ) 
 		{
 			if (strcmp(facilities[idx].facname, logfacname.c_str()) == 0) 
 			{
@@ -1207,9 +1171,32 @@ int main(int argc, char**argv)
 
 	if (!g_bRunAsDaemon)
 	{
+#ifndef WIN32
+		struct sigaction newSigAction;
+
+		/* Set up a signal handler */
+		newSigAction.sa_sigaction = signal_handler;
+		sigemptyset(&newSigAction.sa_mask);
+		newSigAction.sa_flags = SA_SIGINFO;
+
+		/* Signals to handle */
+		sigaction(SIGTERM, &newSigAction, NULL);    // catch term signal
+		sigaction(SIGINT,  &newSigAction, NULL);    // catch interrupt signal
+		sigaction(SIGSEGV, &newSigAction, NULL);    // catch segmentation fault signal
+		sigaction(SIGABRT, &newSigAction, NULL);    // catch abnormal termination signal
+		sigaction(SIGILL,  &newSigAction, NULL);    // catch invalid program image
+		sigaction(SIGFPE,  &newSigAction, NULL);    // catch floating point error
+		sigaction(SIGUSR1, &newSigAction, NULL);    // catch SIGUSR1 (used by watchdog)
+#else
 		signal(SIGINT, signal_handler);
 		signal(SIGTERM, signal_handler);
+#endif
 	}
+
+	// start Watchdog thread after daemonization
+	m_LastHeartbeat = mytime(NULL);
+	std::thread thread_watchdog(Do_Watchdog_Work);
+	SetThreadName(thread_watchdog.native_handle(), "Watchdog");
 
 	if (!m_mainworker.Start())
 	{
@@ -1217,14 +1204,6 @@ int main(int argc, char**argv)
 	}
 	m_StartTime = time(NULL);
 
-	if (!bUseConfigFile) {
-		if (cmdLine.HasSwitch("-log"))
-		{
-			logfile = cmdLine.GetSafeArgument("-log", 0, "domoticz.log");
-		}
-	}
-	if (!logfile.empty())
-		_log.SetOutputFile(logfile.c_str());
 
 	/* now, lets get into an infinite loop of doing nothing. */
 #if defined WIN32
@@ -1245,12 +1224,14 @@ int main(int argc, char**argv)
 		}
 		else
 			sleep_milliseconds(100);
+		m_LastHeartbeat = mytime(NULL);
 	}
 	TrayMessage(NIM_DELETE, NULL);
 #else
 	while ( !g_bStopApplication )
 	{
 		sleep_seconds(1);
+		m_LastHeartbeat = mytime(NULL);
 	}
 #endif
 	_log.Log(LOG_STATUS, "Closing application!...");
@@ -1278,6 +1259,8 @@ int main(int argc, char**argv)
 	WSACleanup();
 	CoUninitialize();
 #endif
+	g_stop_watchdog = true;
+	thread_watchdog.join();
 	return 0;
 }
 

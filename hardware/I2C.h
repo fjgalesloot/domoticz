@@ -41,10 +41,10 @@ private:
 
 	int ReadInt(int fd, uint8_t *devValues, uint8_t startReg, uint8_t bytesToRead);
 	int WriteCmd(int fd, uint8_t devAction);
+	int WriteCmdAddr(const int fd, const uint8_t CmdAddr, const uint8_t devAction);
 
 private:
-	boost::shared_ptr<boost::thread> m_thread;
-	volatile bool m_stoprequested;
+	std::shared_ptr<std::thread> m_thread;
 
 	_eI2CType m_dev_type;
 	uint8_t m_i2c_addr;
@@ -54,8 +54,8 @@ private:
 
 	// BMP085 stuff
 	//Forecast
-	int bmp_CalculateForecast(const float pressure);
-	int CalculateForcast(const float pressure);
+	uint8_t bmp_CalculateForecast(const float pressure);
+	uint8_t CalculateForecast(const float pressure);
 	float m_LastPressure;
 	int m_LastMinute;
 	float m_pressureSamples[180];

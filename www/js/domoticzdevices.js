@@ -325,13 +325,13 @@ function decodeBase64(s) {
 //  �2003 by Gavin Kistner:  http://phrogz.net/JS/classes/OOPinJS.html , http://phrogz.net/JS/classes/OOPinJS2.html
 Function.prototype.inheritsFrom = function (parentClassOrObject) {
     if (parentClassOrObject.constructor == Function) {
-        //Normal Inheritance 
+        //Normal Inheritance
         this.prototype = new parentClassOrObject;
         this.prototype.constructor = this;
         this.prototype.parent = parentClassOrObject.prototype;
     }
     else {
-        //Pure Virtual Inheritance 
+        //Pure Virtual Inheritance
         this.prototype = parentClassOrObject;
         this.prototype.constructor = this;
         this.prototype.parent = parentClassOrObject;
@@ -372,23 +372,9 @@ function Device(item) {
         this.level = (typeof item.LevelInt != 'undefined') ? parseInt(item.LevelInt) : 0;
         this.levelMax = (typeof item.MaxDimLevel != 'undefined') ? parseInt(item.MaxDimLevel) : 0;
         if (this.level > this.levelMax) this.levelMax = this.level;
-        
-        if (this.subtype == "Alert" || this.subtype == "Text") {
-            this.data = item.Data.replace(/([^>\r\n]?)(\r\n|\n\r|\r|\n)/g, '$1<br />$2');
-            
-            if (this.data.indexOf("<br />") != -1) {
-                this.hasNewLine = true;
-                console.log("YES!");
-            }
-            else {
-                this.hasNewLine = false;
-            }
-        }
-        else {
-            this.data = (typeof item.Data != 'undefined') ? item.Data : '';
-            this.hasNewLine = false;
-        }
-        
+        this.data = (typeof item.Data != 'undefined') ? item.Data : '';
+        this.hasNewLine = false;
+
         this.smallStatus = this.data;
         if (typeof item.Usage != 'undefined') {
             this.data = item.Usage;
@@ -473,10 +459,7 @@ function Device(item) {
                         Device.elementPadding * 2.5 + 1
                     );
                 }
-                
-                
-                
-                
+
                 var maxSpan = getMaxSpanWidth(oText);
                 el = makeSVGnode('g', { id: this.uniquename + "_Tile", 'class': 'DeviceTile', style: (maxSpan == 0) ? 'display:none' : 'display:inline' }, '');
                 var offset = (Device.iconSize / 2) - (maxSpan / 2) - Device.elementPadding;
@@ -606,7 +589,7 @@ function Device(item) {
                         }
                     }
                 }
-                
+
                 gStatusGroup.appendChild(oStatus);
             }
             var gText = makeSVGnode('text', { id: "lastseen", x: 0, y: Device.elementPadding * 7.5, 'font-size': '80%' }, '');
@@ -820,20 +803,19 @@ Device.initialise = function () {
 
         var cont = getSVGnode();
         if (cont != undefined) {
-            var devCont;
             if ($("#DeviceContainer")[0] == undefined) {
-                devCont = makeSVGnode('g', { id: 'DeviceContainer' }, '');
+                var devCont = makeSVGnode('g', { id: 'DeviceContainer' }, '');
                 cont.appendChild(devCont);
                 Device.checkDefs();
-            }
-            if ($("#DeviceIcons")[0] == undefined) {
-                devCont.appendChild(makeSVGnode('g', { id: 'DeviceIcons' }, ''));
-            }
-            if ($("#DeviceDetails")[0] == undefined) {
-                devCont.appendChild(makeSVGnode('g', { id: 'DeviceDetails' }, ''));
-            }
-            if ($("#DeviceData")[0] == undefined) {
-                devCont.appendChild(makeSVGnode('g', { id: 'DeviceData' }, ''));
+                if ($("#DeviceIcons")[0] == undefined) {
+                        devCont.appendChild(makeSVGnode('g', { id: 'DeviceIcons' }, ''));
+                }
+                if ($("#DeviceDetails")[0] == undefined) {
+                        devCont.appendChild(makeSVGnode('g', { id: 'DeviceDetails' }, ''));
+                }
+                if ($("#DeviceData")[0] == undefined) {
+                        devCont.appendChild(makeSVGnode('g', { id: 'DeviceData' }, ''));
+                }
             }
         }
     }
@@ -846,7 +828,6 @@ Device.create = function (item) {
     if (typeof item === 'string') {
         item = JSON.parse(item);
     }
-
     // Anomalies in device pattern (Scenes & Dusk sensors say they are  lights(???)
     if (item.Type === 'Scene') {
         type = 'scene';
@@ -854,6 +835,8 @@ Device.create = function (item) {
         type = 'group';
     } else if ((item.Type === 'General') && (item.SubType === 'Barometer')) {
         type = 'baro';
+    } else if ((item.Type === 'General') && (item.SubType === 'Custom Sensor')) {
+        type = 'custom';
     } else if (
         (item.SwitchType === 'Dusk Sensor') ||
         (item.SwitchType === 'Selector')
@@ -1013,7 +996,7 @@ Device.popupCancelDelay = function () {
 Device.popup = function (target) {
     var ignorePopupDelay = (Device.popupDelayDevice != "");
     Device.popupCancelDelay();
-    $('.DeviceDetails').css('display', 'none');   // hide all popups 
+    $('.DeviceDetails').css('display', 'none');   // hide all popups
     if (Device.expandVar != null) {
         clearInterval(Device.expandVar);
         Device.expandVar = null;
@@ -1162,7 +1145,7 @@ function Sensor(item) {
         var sensorType = this.type.replace(/\s/g, '');
 
         if (sensorType === 'General') {
-            this.LogLink = "window.location.href = '#/Devices/" + this.index + "/LightLog'";
+            this.LogLink = "window.location.href = '#/Devices/" + this.index + "/Log'";
         } else {
             this.LogLink = this.onClick = "Show" + sensorType + "Log('#" + Device.contentTag + "','" + Device.backFunction + "','" + this.index + "','" + this.name + "', '" + this.switchTypeVal + "');";
         }
@@ -1203,7 +1186,7 @@ function TemperatureSensor(item) {
         this.parent.constructor(item);
         this.image = "images/temp48.png";
         this.status = $.t('Temp') + ': ' + this.data;
-        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/TemperatureLog'";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
     }
 }
 TemperatureSensor.inheritsFrom(VariableSensor);
@@ -1226,17 +1209,24 @@ WeatherSensor.inheritsFrom(VariableSensor);
 function Switch(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
-        this.imagetext = "Activate switch";
-        this.controlable = true;
-        this.onClick = "SwitchLight(" + this.index + ",'" + ((this.status == "Off") ? "On" : "Off") + "'," + Device.switchFunction + "," + this.protected + ");";
+
+        var bIsOff = (
+			(this.status == "Off")
+			|| (item.Status == 'Closed')
+			|| (item.Status == 'Locked')
+        );
+        
         if (item.CustomImage != 0) {
-            this.image = (this.status == "Off") ? "images/" + item.Image + "48_Off.png" : "images/" + item.Image + "48_On.png";
+            this.image = (bIsOff) ? "images/" + item.Image + "48_Off.png" : "images/" + item.Image + "48_On.png";
         } else {
-            this.image = (this.status == "Off") ? "images/" + item.TypeImg + "48_Off.png" : "images/" + item.TypeImg + "48_On.png";
+            this.image = (bIsOff) ? "images/" + item.TypeImg + "48_Off.png" : "images/" + item.TypeImg + "48_On.png";
         }
-        this.LogLink = "window.location.href = '#/Devices/" + this.index + "/LightLog'";
-        this.showStatus = (Device.showSwitchValues == true);
         this.data = '';
+        this.LogLink = "window.location.href = '#/Devices/" + this.index + "/Log'";
+		this.showStatus = (Device.showSwitchValues == true);
+		this.imagetext = "Activate switch";
+		this.controlable = true;
+		this.onClick = "SwitchLight(" + this.index + ",'" + ((this.status == "Off") ? "On" : "Off") + "'," + this.protected + ");";
     }
 }
 Switch.inheritsFrom(Sensor);
@@ -1244,7 +1234,7 @@ Switch.inheritsFrom(Sensor);
 function BinarySwitch(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
-        this.onClick = "SwitchLight(" + this.index + ",'" + ((this.status == "Off") ? "On" : "Off") + "'," + Device.switchFunction + "," + this.protected + ");";
+        this.onClick = "SwitchLight(" + this.index + ",'" + ((this.status == "Off") ? "On" : "Off") + "'," + this.protected + ");";
     }
 }
 BinarySwitch.inheritsFrom(Switch);
@@ -1253,8 +1243,12 @@ BinarySwitch.inheritsFrom(Switch);
 function Alert(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
-        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/TextLog'";
-        this.NotifyLink = "";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
+        this.NotifyLink = "";	
+		this.data = item.Data.replace(/([^>\r\n]?)(\r\n|\n\r|\r|\n)/g, '$1<br />$2');
+		if (this.data.indexOf("<br />") != -1) {
+			this.hasNewLine = true;
+		}		
         this.status = this.data;
         this.data = "";
         if (typeof item.Level != 'undefined') {
@@ -1292,16 +1286,14 @@ function Blinds(item) {
         this.data = '';
         if (item.Status == 'Closed') {
             this.image = 'images/blinds48sel.png';
-            this.onClick = 'SwitchLight(' + this.index + ",'" + ((item.SwitchType == "Blinds Inverted") ? 'On' : 'Off') + "'," + Device.switchFunction + ',' + this.protected + ');';
             this.image2 = 'images/blindsopen48.png';
-            this.onClick2 = 'SwitchLight(' + this.index + ",'" + ((item.SwitchType == "Blinds Inverted") ? 'Off' : 'On') + "'," + Device.switchFunction + ',' + this.protected + ');';
         }
         else {
             this.image = 'images/blindsopen48sel.png';
-            this.onClick = 'SwitchLight(' + this.index + ",'" + ((item.SwitchType != "Blinds Inverted") ? 'On' : 'Off') + "'," + Device.switchFunction + ',' + this.protected + ');';
             this.image2 = 'images/blinds48.png';
-            this.onClick2 = 'SwitchLight(' + this.index + ",'" + ((item.SwitchType != "Blinds Inverted") ? 'Off' : 'On') + "'," + Device.switchFunction + ',' + this.protected + ');';
         }
+		this.onClick = 'SwitchLight(' + this.index + ",'" + ((item.SwitchType == "Blinds Inverted") ? 'On' : 'Off') + "'," + this.protected + ');';
+		this.onClick2 = 'SwitchLight(' + this.index + ",'" + ((item.SwitchType == "Blinds Inverted") ? 'Off' : 'On') + "'," + this.protected + ');';
         if (item.SwitchType == "Blinds Percentage") {
             this.haveDimmer = true;
             this.image2 = '';
@@ -1315,16 +1307,8 @@ function Counter(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
         this.image = "images/counter.png";
-        switch (item.SubType) {
-                        case "Energy":
-                this.LogLink = this.onClick = "ShowSmartLog('#" + Device.contentTag + "','" + Device.backFunction + "','" + this.index + "','" + this.name + "', '" + this.switchTypeVal + "');";
-                                break;
-                        case "Gas":
-                this.LogLink = this.onClick = "ShowCounterLog('#" + Device.contentTag + "','" + Device.backFunction + "','" + this.index + "','" + this.name + "', '" + this.switchTypeVal + "');";
-                break;
-            default:
-                                this.LogLink = this.onClick = "ShowCounterLog('#" + Device.contentTag + "','" + Device.backFunction + "','" + this.index + "','" + this.name + "', '" + this.switchTypeVal + "');";
-        }
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
+
         if (typeof item.CounterToday != 'undefined') {
             this.status += ' ' + $.t("Today") + ': ' + item.CounterToday;
             this.smallStatus = item.CounterToday;
@@ -1344,12 +1328,10 @@ Counter.inheritsFrom(UtilitySensor);
 function Contact(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
-        if (item.CustomImage == 0) {
-            this.image = (this.status == "Closed") ? "images/contact48.png" : this.image = "images/contact48_open.png";
-        }
+		this.image = (this.status == "Closed") ? "images/" + item.Image + "48_Off.png" : "images/" + item.Image + "48_On.png";
         this.data = '';
         this.smallStatus = this.status;
-        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/LightLog'";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
     }
 }
 Contact.inheritsFrom(BinarySensor);
@@ -1374,20 +1356,20 @@ function Current(item) {
         }
         switch (this.type) {
             case "Energy":
-                this.LogLink = this.onClick = "ShowCounterLogSpline('#" + Device.contentTag + "','" + Device.backFunction + "','" + this.index + "','" + this.name + "', '" + this.switchTypeVal + "');";
+                this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
                 this.smallStatus = this.data;
                 break;
             case "Usage":
-                this.LogLink = this.onClick = "ShowUsageLog('#" + Device.contentTag + "','" + Device.backFunction + "','" + this.index + "','" + this.name + "', '" + this.switchTypeVal + "');";
+                this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
                 break;
             case "General":
                 switch (this.subtype) {
                     case "kWh":
-                        this.LogLink = this.onClick = "ShowCounterLogSpline('#" + Device.contentTag + "','" + Device.backFunction + "','" + this.index + "','" + this.name + "', '" + this.switchTypeVal + "');";
+                        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
                         this.smallStatus = this.data;
                         break;
                     case "Voltage":
-                        this.LogLink = this.onClick = "ShowGeneralGraph('#" + Device.contentTag + "','" + Device.backFunction + "','" + this.index + "','" + escape(this.name) + "', '" + this.switchTypeVal + "', 'VoltageGeneral');";
+                        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
                         this.smallStatus = this.data;
                         break;
                     default:
@@ -1405,15 +1387,18 @@ function Current(item) {
 Current.inheritsFrom(UtilitySensor);
 
 function Custom(item) {
-        if (arguments.length != 0) {
-        this.parent.constructor(item);
-                this.image = "images/Custom.png";
-                this.LogLink = this.onClick = "ShowGeneralGraph('#" + Device.contentTag + "','" + Device.backFunction + "'," + this.index + ",'" + escape(this.name) + "','" + this.sensorunit + "','" + this.subtype + "');";
-                this.data = '';
-        }
+	if (arguments.length != 0) {
+		this.parent.constructor(item);
+		if (item.CustomImage != 0) {
+			this.image = "images/" + item.Image + "48_On.png";
+		} else {
+			this.image = "images/Custom.png";
+		}
+		this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
+		this.data = '';
+	}
 }
 Custom.inheritsFrom(UtilitySensor);
-
 
 function Dimmer(item) {
     if (arguments.length != 0) {
@@ -1435,11 +1420,11 @@ function Door(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
         if (item.CustomImage == 0) {
-            this.image = ((this.status == "Locked")||(this.status == "Closed")) ? "images/" + item.TypeImg + "48.png" : this.image = "images/" + item.TypeImg + "48open.png";
+            this.image = ((this.status == "Locked")||(this.status == "Closed")) ? "images/" + item.Image + "48_Off.png" : this.image = "images/" + item.Image + "48_On.png";
         }
         this.data = '';
         this.NotifyLink = this.onClick = "";
-        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/LightLog'";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
     }
 }
 Door.inheritsFrom(BinarySwitch);
@@ -1448,15 +1433,15 @@ function DoorContact(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
         if (item.CustomImage == 0) {
-            this.image = (this.status == "Closed") ? "images/door48.png" : this.image = "images/door48open.png";
+            this.image = (this.status == "Closed") ? "images/" + item.Image + "48_Off.png" : this.image = "images/" + item.Image + "48_On.png";
         }
         this.imagetext = "";
         this.NotifyLink = this.onClick = "";
-        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/LightLog'";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
         this.data = '';
     }
 }
-DoorContact.inheritsFrom(BinarySwitch);
+DoorContact.inheritsFrom(BinarySensor);
 
 function Doorbell(item) {
     if (arguments.length != 0) {
@@ -1471,7 +1456,7 @@ function DuskSensor(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
         this.image = (item.Status == 'On') ? "images/uvdark.png" : this.image = "images/uvsunny.png";
-        this.onClick = "window.location.href = '#/Devices/" + this.index + "/LightLog'";
+        this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
         this.data = '';
     }
 }
@@ -1480,9 +1465,9 @@ DuskSensor.inheritsFrom(BinarySensor);
 function Group(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
-        this.image = 'images/push48.png';
+        this.image = 'images/Push48_On.png';
         this.onClick = 'SwitchScene(' + this.index + ", 'On', undefined, " + this.protected + ');';
-        this.image2 = 'images/pushoff48.png';
+        this.image2 = 'images/Push48_Off.png';
         this.onClick2 = 'SwitchScene(' + this.index + ", 'Off', undefined, " + this.protected + ');';
         (this.status == 'Off') ? this.image2_opacity = 0.5 : this.image_opacity = 0.5;
         this.data = '';
@@ -1496,8 +1481,8 @@ function Hardware(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
 
-        if (this.subtype === 'General') {
-            this.LogLink = "window.location.href = '#/Devices/" + this.index + "/LightLog'";
+        if (this.subtype === 'General' || this.subtype === 'Percentage') {
+            this.LogLink = "window.location.href = '#/Devices/" + this.index + "/Log'";
         } else {
             this.LogLink = this.onClick = "Show" + this.subtype + "Log('#" + Device.contentTag + "','" + Device.backFunction + "','" + this.index + "','" + this.name + "', '" + this.switchTypeVal + "');";
         }
@@ -1516,7 +1501,7 @@ function Humidity(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
         this.image = "images/moisture48.png";
-        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/TemperatureLog'";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
         if (typeof item.Humidity != 'undefined') {
             this.data = this.smallStatus = item.Humidity + '%';
             this.status = $.t('Humidity') + ': ' + item.Humidity + '%';
@@ -1561,7 +1546,7 @@ function Motion(item) {
         if (item.CustomImage == 0) {
             this.image = (this.status == "On") ? "images/" + item.TypeImg + "48-on.png" : "images/" + item.TypeImg + "48-off.png";
         }
-        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/LightLog'";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
         this.data = '';
         this.smallStatus = this.status;
     }
@@ -1571,13 +1556,8 @@ Motion.inheritsFrom(SecuritySensor);
 function Pushon(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
-        if (item.InternalState == "On") {
-            this.image = "images/pushon48.png";
-        }
-        else {
-            this.image = "images/push48.png";
-        }
-        this.onClick = "SwitchLight(" + this.index + ",'On'," + Device.switchFunction + "," + this.protected + ");";
+		this.image = "images/" + item.Image + "48_On.png";
+        this.onClick = "SwitchLight(" + this.index + ",'On'," + this.protected + ");";
     }
 }
 Pushon.inheritsFrom(BinarySwitch);
@@ -1585,8 +1565,8 @@ Pushon.inheritsFrom(BinarySwitch);
 function Pushoff(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
-        this.image = "images/pushoff48.png";
-        this.onClick = "SwitchLight(" + this.index + ",'Off'," + Device.switchFunction + "," + this.protected + ");";
+        this.image = "images/" + item.Image + "48_Off.png";
+        this.onClick = "SwitchLight(" + this.index + ",'Off'," + this.protected + ");";
     }
 }
 Pushoff.inheritsFrom(BinarySwitch);
@@ -1594,7 +1574,7 @@ Pushoff.inheritsFrom(BinarySwitch);
 function Radiation(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
-        this.LogLink = this.onClick = "ShowGeneralGraph('#" + Device.contentTag + "','" + Device.backFunction + "'," + this.index + ",'" + this.name + "', '" + this.switchTypeVal + "', 'Radiation');";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
     }
 }
 Radiation.inheritsFrom(WeatherSensor);
@@ -1655,7 +1635,7 @@ function Smoke(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
         this.image = ((item.Status == "Panic") || (item.Status == "On")) ? "images/smoke48on.png" : this.image = "images/smoke48off.png";
-        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/LightLog'";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
         this.data = '';
     }
 }
@@ -1682,6 +1662,10 @@ function Text(item) {
         this.parent.constructor(item);
         this.imagetext = "";
         this.NotifyLink = this.LogLink = this.onClick = "";
+		this.data = item.Data.replace(/([^>\r\n]?)(\r\n|\n\r|\r|\n)/g, '$1<br />$2');
+		if (this.data.indexOf("<br />") != -1) {
+			this.hasNewLine = true;
+		}		
         this.status = this.data;
         this.data = "";
     }
@@ -1691,7 +1675,7 @@ Text.inheritsFrom(Sensor);
 function Visibility(item) {
     if (arguments.length != 0) {
         this.parent.constructor(item);
-        this.LogLink = this.onClick = "ShowGeneralGraph('#" + Device.contentTag + "','" + Device.backFunction + "'," + this.index + ",'" + this.name + "', '" + this.switchTypeVal + "', '" + this.subtype + "');";
+        this.LogLink = this.onClick = "window.location.href = '#/Devices/" + this.index + "/Log'";
     }
 }
 Visibility.inheritsFrom(WeatherSensor);

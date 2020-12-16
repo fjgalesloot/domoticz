@@ -3,6 +3,7 @@
 #include "../DomoticzHardware.h"
 #include "../hardwaretypes.h"
 #include "../../notifications/NotificationBase.h"
+#include "PythonObjects.h"
 
 #ifndef byte
 typedef unsigned char byte;
@@ -43,10 +44,10 @@ namespace Plugins {
 
 		CPluginNotifier*	m_Notifier;
 
-		boost::mutex	m_TransportsMutex;
+		std::mutex	m_TransportsMutex;
 		std::vector<CPluginTransport*>	m_Transports;
 
-		boost::shared_ptr<boost::thread> m_thread;
+		std::shared_ptr<std::thread> m_thread;
 
 		bool StartHardware() override;
 		void Do_Work();
@@ -60,8 +61,8 @@ namespace Plugins {
 		CPlugin(const int HwdID, const std::string &Name, const std::string &PluginKey);
 		~CPlugin(void);
 
-		bool	IoThreadRequired();
 		int		PollInterval(int Interval = -1);
+		void*	PythonModule() { return m_PyModule; };
 		void	Notifier(std::string Notifier = "");
 		void	AddConnection(CPluginTransport*);
 		void	RemoveConnection(CPluginTransport*);
@@ -78,12 +79,12 @@ namespace Plugins {
 		void	DisconnectEvent(CEventBase*);
 		void	Callback(std::string sHandler, void* pParams);
 		void	RestoreThread();
+		void	ReleaseThread();
 		void	Stop();
 
 		void	WriteDebugBuffer(const std::vector<byte>& Buffer, bool Incoming);
 
-		bool	WriteToHardware(const char *pdata, const unsigned char length);
-		void	Restart();
+		bool	WriteToHardware(const char *pdata, const unsigned char length) override;
 		void	SendCommand(const int Unit, const std::string &command, const int level, const _tColor color);
 		void	SendCommand(const int Unit, const std::string &command, const float level);
 
@@ -98,15 +99,13 @@ namespace Plugins {
 		bool	HasNodeFailed(const int Unit);
 
 		std::string			m_PluginKey;
-		std::string			m_Username;
-		std::string			m_Password;
 		void*				m_DeviceDict;
 		void*				m_ImageDict;
 		void*				m_SettingsDict;
 		std::string			m_HomeFolder;
 		PluginDebugMask		m_bDebug;
-		bool				m_stoprequested;
 		bool				m_bIsStarting;
+		bool				m_bTracing;
 	};
 
 	class CPluginNotifier : public CNotificationBase
@@ -129,6 +128,14 @@ namespace Plugins {
 			const int Priority,
 			const std::string &Sound,
 			const bool bFromNotification);
+	};
+
+	//
+//	Holds per plugin state details, specifically plugin object, read using PyModule_GetState(PyObject *module)
+//
+	struct module_state {
+		CPlugin* pPlugin;
+		PyObject* error;
 	};
 
 }

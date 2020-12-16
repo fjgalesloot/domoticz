@@ -1,8 +1,8 @@
 #pragma once
 
-#include <map>
 #include <boost/asio.hpp>
 #include <boost/function.hpp>
+#include <boost/thread.hpp>
 #include "server.hpp"
 #include "session_store.hpp"
 
@@ -162,17 +162,21 @@ namespace http {
 			void RegisterIncludeCode(
 				const char* idname,
 				webem_include_function fun );
-			
+
 			void RegisterIncludeCodeW(
 				const char* idname,
 				webem_include_function_w fun );
 
 			void RegisterPageCode(
 				const char* pageurl,
-				webem_page_function fun );
+				webem_page_function fun,
+				bool bypassAuthentication = false
+			);
 			void RegisterPageCodeW(
 				const char* pageurl,
-				webem_page_function fun );
+				webem_page_function fun,
+				bool bypassAuthentication = false
+			);
 
 			bool Include( std::string& reply );
 
@@ -181,6 +185,7 @@ namespace http {
 				webem_action_function fun );
 
 			void RegisterWhitelistURLString(const char* idname);
+			void RegisterWhitelistCommandsString(const char* idname);
 
 			bool IsAction(const request& req);
 			bool CheckForAction(WebEmSession & session, request& req);
@@ -194,7 +199,7 @@ namespace http {
 			void AddUserPassword(const unsigned long ID, const std::string &username, const std::string &password, const _eUserRights userrights, const int activetabs);
 			std::string ExtractRequestPath(const std::string& original_request_path);
 			bool IsBadRequestPath(const std::string& original_request_path);
-			
+
 			void ClearUserPasswords();
 			std::vector<_tWebUserPassword> m_userpasswords;
 			void AddLocalNetworks(std::string network);
@@ -215,6 +220,7 @@ namespace http {
 
 			std::string m_zippassword;
 			const std::string GetPort();
+			const std::string GetWebRoot();
 			WebEmSession * GetSession(const std::string & ssid);
 			void AddSession(const WebEmSession & session);
 			void RemoveSession(const WebEmSession & session);
@@ -223,6 +229,7 @@ namespace http {
 			_eAuthenticationMethod m_authmethod;
 			//Whitelist url strings that bypass authentication checks (not used by basic-auth authentication)
 			std::vector < std::string > myWhitelistURLs;
+			std::vector < std::string > myWhitelistCommands;
 			std::map<std::string, WebEmSession> m_sessions;
 			server_settings m_settings;
 			// actual theme selected
@@ -247,14 +254,14 @@ namespace http {
 			/// Rene: Beware: myRequestHandler should be declared BEFORE myServer
 			cWebemRequestHandler myRequestHandler;
 			/// boost::asio web server (RK: plain or secure)
-			boost::shared_ptr<server_base> myServer;
+			std::shared_ptr<server_base> myServer;
 			// root of url for reverse proxy servers
 			std::string m_webRoot;
 			/// sessions management
-			boost::mutex m_sessionsMutex;
+			std::mutex m_sessionsMutex;
 			boost::asio::io_service m_io_service;
 			boost::asio::deadline_timer m_session_clean_timer;
-			boost::thread m_io_service_thread;
+			std::shared_ptr<std::thread> m_io_service_thread;
 		};
 
 	}

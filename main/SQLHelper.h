@@ -1,13 +1,12 @@
 #pragma once
 
-#include <vector>
 #include <string>
 #include "RFXNames.h"
 #include "../hardware/hardwaretypes.h"
 #include "Helper.h"
 #include "../httpclient/UrlEncode.h"
 #include "../httpclient/HTTPClient.h"
-#include <map>
+#include "StoppableTask.h"
 
 #define timer_resolution_hz 25
 
@@ -34,6 +33,15 @@ enum _eWeightUnit
     WEIGHTUNIT_LB,
 };
 
+enum _eUsrVariableType
+{
+	USERVARTYPE_INTEGER = 0,
+	USERVARTYPE_FLOAT, //1
+	USERVARTYPE_STRING, //2
+	USERVARTYPE_DATE, //3 Date in format DD/MM/YYYY
+	USERVARTYPE_TIME, //4 Time in 24 hr format HH:MM
+};
+
 enum _eTaskItemType
 {
 	TITEM_SWITCHCMD=0,
@@ -51,6 +59,7 @@ enum _eTaskItemType
 	TITEM_SEND_IFTTT_TRIGGER,
 	TITEM_UPDATEDEVICE,
 	TITEM_CUSTOM_COMMAND,
+	TITEM_CUSTOM_EVENT,
 };
 
 struct _tTaskItem
@@ -70,6 +79,7 @@ struct _tTaskItem
 	std::string _sValue;
 	std::string _command;
 	std::string _sUntil;
+	std::string _sUser;
 	int _level;
 	_tColor _Color;
 	std::string _relatedEvent;
@@ -176,7 +186,7 @@ struct _tTaskItem
 			getclock(&tItem._DelayTimeBegin);
 		return tItem;
 	}
-	static _tTaskItem SwitchLightEvent(const float DelayTime, const uint64_t idx, const std::string &Command, const int Level, const _tColor Color, const std::string &eventName)
+	static _tTaskItem SwitchLightEvent(const float DelayTime, const uint64_t idx, const std::string &Command, const int Level, const _tColor Color, const std::string &eventName, const std::string& User)
 	{
 		_tTaskItem tItem;
 		tItem._ItemType=TITEM_SWITCHCMD_EVENT;
@@ -186,11 +196,12 @@ struct _tTaskItem
 		tItem._level= Level;
 		tItem._Color=Color;
 		tItem._relatedEvent = eventName;
+		tItem._sUser = User;
 		if (DelayTime)
 			getclock(&tItem._DelayTimeBegin);
 		return tItem;
 	}
-	static _tTaskItem SwitchSceneEvent(const float DelayTime, const uint64_t idx, const std::string &Command, const std::string &eventName)
+	static _tTaskItem SwitchSceneEvent(const float DelayTime, const uint64_t idx, const std::string &Command, const std::string &eventName, const std::string& User)
 	{
 		_tTaskItem tItem;
 		tItem._ItemType=TITEM_SWITCHCMD_SCENE;
@@ -198,11 +209,12 @@ struct _tTaskItem
 		tItem._idx=idx;
 		tItem._command= Command;
 		tItem._relatedEvent = eventName;
+		tItem._sUser = User;
 		if (DelayTime)
 			getclock(&tItem._DelayTimeBegin);
 		return tItem;
 	}
-	static _tTaskItem GetHTTPPage(const float DelayTime, const std::string &URL, const std::string &eventName)
+	static _tTaskItem GetHTTPPage(const float DelayTime, const std::string &URL, const std::string &/*eventName*/)
 	{
 		return GetHTTPPage(DelayTime, URL, "", HTTPClient::HTTP_METHOD_GET, "", "");
 	}
@@ -238,12 +250,7 @@ struct _tTaskItem
 		tItem._ItemType = TITEM_SEND_NOTIFICATION;
 		tItem._DelayTime = DelayTime;
 		tItem._idx = Priority;
-		std::string tSubject((!Subject.empty()) ? Subject : " ");
-		std::string tBody((!Body.empty()) ? Body : " ");
-		std::string tExtraData((!ExtraData.empty()) ? ExtraData : " ");
-		std::string tSound((!Sound.empty()) ? Sound : " ");
-		std::string tSubSystem((!SubSystem.empty()) ? SubSystem : " ");
-		tItem._command = tSubject + "!#" + tBody + "!#" + tExtraData + "!#" + tSound + "!#" + tSubSystem ;
+		tItem._command = Subject + "!#" + Body + "!#" + ExtraData + "!#" + Sound + "!#" + SubSystem ;
 		if (DelayTime)
 			getclock(&tItem._DelayTimeBegin);
 		return tItem;
@@ -273,6 +280,17 @@ struct _tTaskItem
 			getclock(&tItem._DelayTimeBegin);
 		return tItem;
 	}
+	static _tTaskItem CustomEvent(const float DelayTime, const std::string& namestr, const std::string parameterstr)
+	{
+		_tTaskItem tItem;
+		tItem._ItemType = TITEM_CUSTOM_EVENT;
+		tItem._DelayTime = DelayTime;
+		tItem._ID = namestr;
+		tItem._sValue = parameterstr;
+		if (DelayTime)
+			getclock(&tItem._DelayTimeBegin);
+		return tItem;
+	}
 };
 
 //row result for an sql query : string Vector
@@ -281,17 +299,18 @@ typedef   std::vector<std::string> TSqlRowQuery;
 // result for an sql query : Vector of TSqlRowQuery
 typedef   std::vector<TSqlRowQuery> TSqlQueryResult;
 
-class CSQLHelper
+class CSQLHelper : public StoppableTask
 {
 public:
 	CSQLHelper(void);
 	~CSQLHelper(void);
 
-	bool OpenDatabase();
 	void SetDatabaseName(const std::string &DBName);
 
-	bool BackupDatabase(const std::string &OutputFile);
+	bool OpenDatabase();
+	void CloseDatabase();
 
+	bool BackupDatabase(const std::string &OutputFile);
 	bool RestoreDatabase(const std::string &dbase);
 
 	//Returns DeviceRowID
@@ -300,7 +319,7 @@ public:
 	uint64_t UpdateValue(const int HardwareID, const char* ID, const unsigned char unit, const unsigned char devType, const unsigned char subType, const unsigned char signallevel, const unsigned char batterylevel, const int nValue, const char* sValue, std::string &devname, const bool bUseOnOffAction=true);
 	uint64_t UpdateValueLighting2GroupCmd(const int HardwareID, const char* ID, const unsigned char unit, const unsigned char devType, const unsigned char subType, const unsigned char signallevel, const unsigned char batterylevel, const int nValue, const char* sValue, std::string &devname, const bool bUseOnOffAction = true);
 	uint64_t UpdateValueHomeConfortGroupCmd(const int HardwareID, const char* ID, const unsigned char unit, const unsigned char devType, const unsigned char subType, const unsigned char signallevel, const unsigned char batterylevel, const int nValue, const char* sValue, std::string &devname, const bool bUseOnOffAction = true);
-	
+
 	bool DoesDeviceExist(const int HardwareID, const char* ID, const unsigned char unit, const unsigned char devType, const unsigned char subType);
 
 	uint64_t InsertDevice(const int HardwareID, const char* ID, const unsigned char unit, const unsigned char devType, const unsigned char subType, const int switchType, const int nValue, const char* sValue, const std::string &devname, const unsigned char signallevel = 12, const unsigned char batterylevel = 255, const int used = 0);
@@ -355,7 +374,8 @@ public:
 
 	void DeleteEvent(const std::string &idx);
 
-	void DeleteDevices(const std::string &idx);
+	void DeleteDevices(const std::string& idx);
+	void DeleteScenes(const std::string& idx);
 
 	void TransferDevice(const std::string &oldidx, const std::string &newidx);
 
@@ -377,22 +397,18 @@ public:
 	void safe_exec_no_return(const char *fmt, ...);
 	bool safe_UpdateBlobInTableWithID(const std::string &Table, const std::string &Column, const std::string &sID, const std::string &BlobData);
 	bool DoesColumnExistsInTable(const std::string &columnname, const std::string &tablename);
-	std::string DeleteUserVariable(const std::string &idx);
-	std::string SaveUserVariable(const std::string &varname, const std::string &vartype, const std::string &varvalue);
-	std::string UpdateUserVariable(const std::string &idx, const std::string &varname, const std::string &vartype, const std::string &varvalue, const bool eventtrigger);
-	bool SetUserVariable(const uint64_t idx, const std::string &varvalue, const bool eventtrigger);
-	std::vector<std::vector<std::string> > GetUserVariables();
+
+	bool AddUserVariable(const std::string &varname, const _eUsrVariableType eVartype, const std::string &varvalue, std::string &errorMessage);
+	bool UpdateUserVariable(const std::string &idx, const std::string &varname, const _eUsrVariableType eVartype, const std::string &varvalue, const bool eventtrigger, std::string &errorMessage);
+	void DeleteUserVariable(const std::string &idx);
+	bool CheckUserVariable(const _eUsrVariableType eVartype, const std::string &varvalue, std::string &errorMessage);
 
 	uint64_t CreateDevice(const int HardwareID, const int SensorType, const int SensorSubType, std::string &devname, const unsigned long nid, const std::string &soptions);
 
-	void UpdateDeviceValue(const char * FieldName , std::string &Value , std::string &Idx );
-	void UpdateDeviceValue(const char * FieldName , int Value , std::string &Idx )   ;
-	void UpdateDeviceValue(const char * FieldName , float Value , std::string &Idx ) ;
-	double ConvertTemperature(double tempcelcius);
-	double ConvertTemperatureUnit(double tempcelcius);
-	std::string GetDeviceValue(const char * FieldName , const char *Idx );
-
-	float getTemperatureFromSValue(const char * sValue);
+	void UpdateDeviceValue(const char * FieldName , const std::string &Value , const std::string &Idx );
+	void UpdateDeviceValue(const char * FieldName , const int Value , const std::string &Idx )   ;
+	void UpdateDeviceValue(const char* FieldName, const float Value, const std::string& Idx);
+	void UpdateDeviceName(const std::string& Idx, const std::string &Name);
 
 	bool GetPreferencesVar(const std::string &Key, double &Value);
 	void UpdatePreferencesVar(const std::string &Key, const double Value);
@@ -406,6 +422,8 @@ public:
 	std::map<std::string, std::string> GetDeviceOptions(const std::string & idx);
 	std::string FormatDeviceOptions(const std::map<std::string, std::string> & optionsMap);
 	bool SetDeviceOptions(const uint64_t idx, const std::map<std::string, std::string> & options);
+
+	float GetCounterDivider(const int metertype, const int dType, const float DefaultValue);
 public:
 	std::string m_LastSwitchID;	//for learning command
 	uint64_t m_LastSwitchRowID;
@@ -422,11 +440,12 @@ public:
 	bool		m_bAllowWidgetOrdering;
 	int			m_ActiveTimerPlan;
 	bool		m_bEnableEventSystem;
+	bool		m_bEnableEventSystemFullURLLog;
 	int			m_ShortLogInterval;
 	bool		m_bLogEventScriptTrigger;
 	bool		m_bDisableDzVentsSystem;
 private:
-	boost::mutex	m_sqlQueryMutex;
+	std::mutex		m_sqlQueryMutex;
 	sqlite3			*m_dbase;
 	std::string		m_dbase_name;
 	unsigned char	m_sensortimeoutcounter;
@@ -437,14 +456,14 @@ private:
 	bool			m_bPreviousAcceptNewHardware;
 
 	std::vector<_tTaskItem> m_background_task_queue;
-	boost::shared_ptr<boost::thread> m_background_task_thread;
-	boost::mutex m_background_task_mutex;
-	bool m_stoprequested;
+	std::shared_ptr<std::thread> m_thread;
+	std::mutex m_background_task_mutex;
 	bool StartThread();
+	void StopThread();
 	void Do_Work();
 
-	bool SwitchLightFromTasker(const std::string &idx, const std::string &switchcmd, const std::string &level, const std::string &color);
-	bool SwitchLightFromTasker(uint64_t idx, const std::string &switchcmd, int level, _tColor color);
+	bool SwitchLightFromTasker(const std::string &idx, const std::string &switchcmd, const std::string &level, const std::string &color, const std::string& User);
+	bool SwitchLightFromTasker(uint64_t idx, const std::string &switchcmd, int level, _tColor color, const std::string& User);
 
 	void FixDaylightSavingTableSimple(const std::string &TableName);
 	void FixDaylightSaving();
@@ -453,15 +472,24 @@ private:
 	uint64_t UpdateValueInt(const int HardwareID, const char* ID, const unsigned char unit, const unsigned char devType, const unsigned char subType, const unsigned char signallevel, const unsigned char batterylevel, const int nValue, const char* sValue, std::string &devname, const bool bUseOnOffAction);
 
 	bool UpdateCalendarMeter(
-		const int HardwareID, 
-		const char* DeviceID, 
-		const unsigned char unit, 
-		const unsigned char devType, 
-		const unsigned char subType, 
-		const bool shortLog, 
-		const long long MeterValue,
-		const long long MeterUsage,
-		const char* date);
+		const int HardwareID,
+		const char* DeviceID,
+		const unsigned char unit,
+		const unsigned char devType,
+		const unsigned char subType,
+		const bool shortLog,
+		const bool multiMeter,
+		const char* date,
+		const long long value1 = 0,
+		const long long value2 = 0,
+		const long long value3 = 0,
+		const long long value4 = 0,
+		const long long value5 = 0,
+		const long long value6 = 0,
+		const long long counter1 = 0,
+		const long long counter2 = 0,
+		const long long counter3 = 0,
+		const long long counter4 = 0);
 
 	void CheckAndUpdateDeviceOrder();
 	void CheckAndUpdateSceneDeviceOrder();
@@ -485,8 +513,6 @@ private:
 	void AddCalendarUpdatePercentage();
 	void AddCalendarUpdateFan();
 	void CleanupShortLog();
-	std::string CheckUserVariable(const int vartype, const std::string &varvalue);
-	std::string CheckUserVariableName(const std::string &varname);
 	bool CheckDate(const std::string &sDate, int &d, int &m, int &y);
 	bool CheckDateSQL(const std::string &sDate);
 	bool CheckDateTimeSQL(const std::string &sDateTime);

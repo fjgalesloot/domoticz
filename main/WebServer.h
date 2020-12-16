@@ -1,7 +1,6 @@
 #pragma once
 
 #include <string>
-#include <vector>
 #include "../webserver/cWebem.h"
 #include "../webserver/request.hpp"
 #include "../webserver/session_store.hpp"
@@ -18,7 +17,7 @@ namespace http {
 	namespace server {
 		class cWebem;
 		struct _tWebUserPassword;
-class CWebServer : public session_store, public boost::enable_shared_from_this<CWebServer>
+class CWebServer : public session_store, public std::enable_shared_from_this<CWebServer>
 {
 	typedef boost::function< void(WebEmSession & session, const request& req, Json::Value &root) > webserver_response_function;
 public:
@@ -48,7 +47,8 @@ public:
 	void GetDatabaseBackup(WebEmSession & session, const request& req, reply & rep);
 	void Post_UploadCustomIcon(WebEmSession & session, const request& req, reply & rep);
 
-	void PostSettings(WebEmSession & session, const request& req, std::string & redirect_uri);
+	void PostSettings(WebEmSession& session, const request& req, reply& rep);
+	void PostLoginCheck(WebEmSession& session, const request& req, reply& rep);
 	void SetRFXCOMMode(WebEmSession & session, const request& req, std::string & redirect_uri);
 	void RFXComUpgradeFirmware(WebEmSession & session, const request& req, std::string & redirect_uri);
 	void UploadFloorplanImage(WebEmSession & session, const request& req, std::string & redirect_uri);
@@ -164,7 +164,7 @@ private:
 	void Cmd_GetDeviceValueOptions(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_GetDeviceValueOptionWording(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_DeleteUserVariable(WebEmSession & session, const request& req, Json::Value &root);
-	void Cmd_SaveUserVariable(WebEmSession & session, const request& req, Json::Value &root);
+	void Cmd_AddUserVariable(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_UpdateUserVariable(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_GetUserVariables(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_GetUserVariable(WebEmSession & session, const request& req, Json::Value &root);
@@ -187,7 +187,8 @@ private:
 	void Cmd_GetUptime(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_GetActualHistory(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_GetNewHistory(WebEmSession & session, const request& req, Json::Value &root);
-	void Cmd_GetConfig(WebEmSession & session, const request& req, Json::Value &root);
+	void Cmd_GetConfig(WebEmSession& session, const request& req, Json::Value& root);
+	void Cmd_GetLocation(WebEmSession& session, const request& req, Json::Value& root);
 	void Cmd_SendNotification(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_EmailCameraSnapshot(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_UpdateDevice(WebEmSession & session, const request& req, Json::Value &root);
@@ -196,8 +197,10 @@ private:
 	void Cmd_SystemShutdown(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_SystemReboot(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_ExcecuteScript(WebEmSession & session, const request& req, Json::Value &root);
+	void Cmd_UpdateApplication(WebEmSession& session, const request& req, Json::Value& root);
 	void Cmd_GetCosts(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_CheckForUpdate(WebEmSession & session, const request& req, Json::Value &root);
+	void Cmd_CustomEvent(WebEmSession& session, const request& req, Json::Value& root);
 	void Cmd_DownloadUpdate(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_DownloadReady(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_DeleteDatePoint(WebEmSession & session, const request& req, Json::Value &root);
@@ -276,11 +279,12 @@ private:
 	void Cmd_BleBoxClearNodes(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_BleBoxAutoSearchingNodes(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_BleBoxUpdateFirmware(WebEmSession & session, const request& req, Json::Value &root);
-	
+
 	void Cmd_GetTimerPlans(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_AddTimerPlan(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_UpdateTimerPlan(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_DeleteTimerPlan(WebEmSession & session, const request& req, Json::Value &root);
+	void Cmd_DuplicateTimerPlan(WebEmSession & session, const request& req, Json::Value &root);
 
 	void Cmd_AddCamera(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_UpdateCamera(WebEmSession & session, const request& req, Json::Value &root);
@@ -302,7 +306,8 @@ private:
 	void RType_Events(WebEmSession & session, const request& req, Json::Value &root);
 	void RType_Hardware(WebEmSession & session, const request& req, Json::Value &root);
 	void RType_Devices(WebEmSession & session, const request& req, Json::Value &root);
-	void RType_Cameras(WebEmSession & session, const request& req, Json::Value &root);
+	void RType_Cameras(WebEmSession& session, const request& req, Json::Value& root);
+	void RType_CamerasUser(WebEmSession& session, const request& req, Json::Value& root);
 	void RType_Users(WebEmSession & session, const request& req, Json::Value &root);
 	void RType_Mobiles(WebEmSession & session, const request& req, Json::Value &root);
 	void RType_Timers(WebEmSession & session, const request& req, Json::Value &root);
@@ -347,7 +352,8 @@ private:
 	void Cmd_ZWaveCancel(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_ApplyZWaveNodeConfig(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_ZWaveStateCheck(WebEmSession & session, const request& req, Json::Value &root);
-	void Cmd_ZWaveRequestNodeConfig(WebEmSession & session, const request& req, Json::Value &root);
+	void Cmd_ZWaveRequestNodeConfig(WebEmSession& session, const request& req, Json::Value& root);
+	void Cmd_ZWaveRequestNodeInfo(WebEmSession& session, const request& req, Json::Value& root);
 	void Cmd_ZWaveReceiveConfigurationFromOtherController(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_ZWaveSendConfigurationToSecondaryController(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_ZWaveTransferPrimaryRole(WebEmSession & session, const request& req, Json::Value &root);
@@ -360,23 +366,20 @@ private:
 	void ZWaveCPNodeSetButton(WebEmSession & session, const request& req, reply & rep);
 	void ZWaveCPAdminCommand(WebEmSession & session, const request& req, reply & rep);
 	void ZWaveCPNodeChange(WebEmSession & session, const request& req, reply & rep);
-	void ZWaveCPSaveConfig(WebEmSession & session, const request& req, reply & rep);
 	void ZWaveCPGetTopo(WebEmSession & session, const request& req, reply & rep);
 	void ZWaveCPGetStats(WebEmSession & session, const request& req, reply & rep);
 	void ZWaveCPSetGroup(WebEmSession & session, const request& req, reply & rep);
-	void ZWaveCPSceneCommand(WebEmSession & session, const request& req, reply & rep);
 	void Cmd_ZWaveSetUserCodeEnrollmentMode(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_ZWaveGetNodeUserCodes(WebEmSession & session, const request& req, Json::Value &root);
 	void Cmd_ZWaveRemoveUserCode(WebEmSession & session, const request& req, Json::Value &root);
 	void ZWaveCPTestHeal(WebEmSession & session, const request& req, reply & rep);
+	void Cmd_ZWaveGetBatteryLevels(WebEmSession& session, const request& req, Json::Value& root);
 	//RTypes
 	void RType_OpenZWaveNodes(WebEmSession & session, const request& req, Json::Value &root);
 	int m_ZW_Hwidx;
 #endif
-#ifdef WITH_TELLDUSCORE
     void Cmd_TellstickApplySettings(WebEmSession &session, const request &req, Json::Value &root);
-#endif
-	boost::shared_ptr<boost::thread> m_thread;
+	std::shared_ptr<std::thread> m_thread;
 
 	std::map < std::string, webserver_response_function > m_webcommands;
 	std::map < std::string, webserver_response_function > m_webrtypes;

@@ -6,11 +6,6 @@
 #include "stdafx.h"
 #include "cWebem.h"
 #include <boost/bind.hpp>
-#include <boost/lexical_cast.hpp>
-#include <boost/algorithm/string.hpp>
-#include <boost/uuid/uuid.hpp>            // uuid class
-#include <boost/uuid/uuid_generators.hpp> // uuid generators
-#include <boost/uuid/uuid_io.hpp>         // streaming operators etc.
 #include "reply.hpp"
 #include "request.hpp"
 #include "mime_types.hpp"
@@ -21,6 +16,7 @@
 #include <stdarg.h>
 #include <fstream>
 #include <sstream>
+#include <cstdlib>
 #include "../main/Helper.h"
 #include "../main/localtime_r.h"
 #include "../main/Logger.h"
@@ -31,6 +27,8 @@
 #ifdef _WIN32
 #define gmtime_r(timep, result) gmtime_s(result, timep)
 #endif
+
+#define websocket_protocol "domoticz"
 
 int m_failcounter = 0;
 
@@ -53,12 +51,13 @@ namespace http {
 			myRequestHandler(doc_root, this),
 			m_DigistRealm("Domoticz.com"),
 			m_session_clean_timer(m_io_service, boost::posix_time::minutes(1)),
-			m_io_service_thread(boost::bind(&boost::asio::io_service::run, &m_io_service)),
 			m_sessions(), // Rene, make sure we initialize m_sessions first, before starting a server
 			myServer(server_factory::create(settings, myRequestHandler))
 		{
 			// associate handler to timer and schedule the first iteration
 			m_session_clean_timer.async_wait(boost::bind(&cWebem::CleanSessions, this));
+			m_io_service_thread = std::make_shared<std::thread>(boost::bind(&boost::asio::io_service::run, &m_io_service));
+			SetThreadName(m_io_service_thread->native_handle(), "Webem_ssncleaner");
 		}
 
 		cWebem::~cWebem()
@@ -101,7 +100,11 @@ namespace http {
 				if (!m_io_service.stopped())
 				{
 					m_io_service.stop();
-					m_io_service_thread.join();
+				}
+				if (m_io_service_thread)
+				{
+					m_io_service_thread->join();
+					m_io_service_thread.reset();
 				}
 			}
 			catch (...)
@@ -160,13 +163,21 @@ namespace http {
 		}
 
 
-		void cWebem::RegisterPageCode(const char* pageurl, webem_page_function fun)
+		void cWebem::RegisterPageCode(const char* pageurl, webem_page_function fun, bool bypassAuthentication)
 		{
 			myPages.insert(std::pair<std::string, webem_page_function >(std::string(pageurl), fun));
+			if (bypassAuthentication)
+			{
+				RegisterWhitelistURLString(pageurl);
+			}
 		}
-		void cWebem::RegisterPageCodeW(const char* pageurl, webem_page_function fun)
+		void cWebem::RegisterPageCodeW(const char* pageurl, webem_page_function fun, bool bypassAuthentication)
 		{
 			myPages_w.insert(std::pair<std::string, webem_page_function >(std::string(pageurl), fun));
+			if (bypassAuthentication)
+			{
+				RegisterWhitelistURLString(pageurl);
+			}
 		}
 
 
@@ -188,7 +199,11 @@ namespace http {
 		{
 			myWhitelistURLs.push_back(idname);
 		}
-
+		void cWebem::RegisterWhitelistCommandsString(const char* idname)
+		{
+			myWhitelistCommands.push_back(idname);
+		}
+		
 
 		/**
 
@@ -313,7 +328,7 @@ namespace http {
 		{
 			// look for cWebem form action request
 			if (!IsAction(req))
-				return true;
+				return false;
 
 			req.parameters.clear();
 
@@ -325,7 +340,7 @@ namespace http {
 			std::map < std::string, webem_action_function >::iterator
 				pfun = myActions.find(code);
 			if (pfun == myActions.end())
-				return true;
+				return false;
 
 			// decode the values
 
@@ -343,7 +358,7 @@ namespace http {
 						//first line is our boundary
 						pos = szContent.find("\r\n");
 						if (pos == std::string::npos)
-							return true;
+							return false;
 						std::string szBoundary = szContent.substr(0, pos);
 						szContent = szContent.substr(pos + 2);
 
@@ -352,23 +367,23 @@ namespace http {
 							//Next line will contain our variable name
 							pos = szContent.find("\r\n");
 							if (pos == std::string::npos)
-								return true;
+								return false;
 							szVariable = szContent.substr(0, pos);
 							szContent = szContent.substr(pos + 2);
 							if (szVariable.find("Content-Disposition") != 0)
 								return true;
 							pos = szVariable.find("name=\"");
 							if (pos == std::string::npos)
-								return true;
+								return false;
 							szVariable = szVariable.substr(pos + 6);
 							pos = szVariable.find("\"");
 							if (pos == std::string::npos)
-								return true;
+								return false;
 							szVariable = szVariable.substr(0, pos);
 							//Next line could be empty, or a Content-Type, if its empty, it is just a string
 							pos = szContent.find("\r\n");
 							if (pos == std::string::npos)
-								return true;
+								return false;
 							szContentType = szContent.substr(0, pos);
 							szContent = szContent.substr(pos + 2);
 							if (
@@ -382,30 +397,30 @@ namespace http {
 								//Its a file/stream, next line should be empty
 								pos = szContent.find("\r\n");
 								if (pos == std::string::npos)
-									return true;
+									return false;
 								szContent = szContent.substr(pos + 2);
 							}
 							else
 							{
 								//next line should be empty
 								if (!szContentType.empty())
-									return true;//dont know this one
+									return false;//dont know this one
 							}
 							pos = szContent.find(szBoundary);
 							if (pos == std::string::npos)
-								return true;
+								return false;
 							szValue = szContent.substr(0, pos - 2);
 							req.parameters.insert(std::pair< std::string, std::string >(szVariable, szValue));
 
 							szContent = szContent.substr(pos + szBoundary.size());
 							pos = szContent.find("\r\n");
 							if (pos == std::string::npos)
-								return true;
+								return false;
 							szContent = szContent.substr(pos + 2);
 						}
 						//we should have at least one value
 						if (req.parameters.empty())
-							return true;
+							return false;
 						// call the function
 						try
 						{
@@ -427,6 +442,25 @@ namespace http {
 						}
 						return true;
 					}
+					else if (
+						(strstr(pContent_Type, "text/plain") != NULL)
+						|| (strstr(pContent_Type, "application/json") != NULL)
+						|| (strstr(pContent_Type, "application/xml") != NULL)
+						)
+					{
+						//Raw data
+						req.parameters.insert(std::pair< std::string, std::string >("data", req.content));
+						// call the function
+						try
+						{
+							pfun->second(session, req, req.uri);
+						}
+						catch (...)
+						{
+
+						}
+						return true;
+					}
 				}
 				uri = req.content;
 				q = 0;
@@ -445,7 +479,7 @@ namespace http {
 			{
 				q = uri.find("=", p);
 				if (q == std::string::npos)
-					return true;
+					return false;
 				name = uri.substr(p, q - p);
 				p = q + 1;
 				q = uri.find("&", p);
@@ -503,7 +537,7 @@ namespace http {
 
 			request_path = ExtractRequestPath(request_path);
 
-			int paramPos = request_path.find_first_of('?');
+			size_t paramPos = request_path.find_first_of('?');
 			if (paramPos != std::string::npos)
 			{
 				request_path = request_path.substr(0, paramPos);
@@ -586,65 +620,119 @@ namespace http {
 				const char *pContent_Type = request::get_req_header(&req, "Content-Type");
 				if (pContent_Type)
 				{
-					if (strstr(pContent_Type, "multipart") != NULL)
+					if (strstr(pContent_Type, "multipart/form-data") != NULL)
 					{
-						const char *pBoundary = strstr(pContent_Type, "boundary=");
-						if (pBoundary != NULL)
+						std::string szContent = req.content;
+						size_t pos;
+						std::string szVariable, szContentType, szValue;
+
+						//first line is our boundary
+						pos = szContent.find("\r\n");
+						if (pos == std::string::npos)
+							return true;
+						std::string szBoundary = szContent.substr(0, pos);
+						szContent = szContent.substr(pos + 2);
+
+						while (!szContent.empty())
 						{
-							std::string szBoundary = std::string("--") + (pBoundary + 9);
-							//Find boundary in content
-							std::istringstream ss(req.content);
-							std::string csubstr;
-							int ii = 0;
-							std::string vName = "";
-							while (!ss.eof())
+							//Next line will contain our variable name
+							pos = szContent.find("\r\n");
+							if (pos == std::string::npos)
+								return true;
+							szVariable = szContent.substr(0, pos);
+							szContent = szContent.substr(pos + 2);
+							if (szVariable.find("Content-Disposition") != 0)
+								return true;
+							pos = szVariable.find("name=\"");
+							if (pos == std::string::npos)
+								return true;
+							szVariable = szVariable.substr(pos + 6);
+							pos = szVariable.find("\"");
+							if (pos == std::string::npos)
+								return true;
+							szVariable = szVariable.substr(0, pos);
+							//Next line could be empty, or a Content-Type, if its empty, it is just a string
+							pos = szContent.find("\r\n");
+							if (pos == std::string::npos)
+								return true;
+							szContentType = szContent.substr(0, pos);
+							szContent = szContent.substr(pos + 2);
+							if (
+								(szContentType.find("application/octet-stream") != std::string::npos)
+								|| (szContentType.find("application/json") != std::string::npos)
+								|| (szContentType.find("application/x-zip") != std::string::npos)
+								|| (szContentType.find("Content-Type: text/xml") != std::string::npos)
+								)
 							{
-								safeGetline(ss, csubstr);
-								if (ii == 0)
-								{
-									//Boundary
-									if (csubstr != szBoundary)
-									{
-										rep = reply::stock_reply(reply::bad_request);
-										return false;
-									}
-									ii++;
-								}
-								else if (ii == 1)
-								{
-									if (csubstr.find("Content-Disposition:") != std::string::npos)
-									{
-										size_t npos = csubstr.find("name=\"");
-										if (npos == std::string::npos)
-										{
-											rep = reply::stock_reply(reply::bad_request);
-											return false;
-										}
-										vName = csubstr.substr(npos + 6);
-										npos = vName.find("\"");
-										if (npos == std::string::npos)
-										{
-											rep = reply::stock_reply(reply::bad_request);
-											return false;
-										}
-										vName = vName.substr(0, npos);
-										ii++;
-									}
-								}
-								else if (ii == 2)
-								{
-									if (csubstr.size() == 0)
-									{
-										ii++;
-										//2 empty lines, rest is data
-										std::string szContent;
-										size_t bpos = size_t(ss.tellg());
-										szContent = req.content.substr(bpos, ss.rdbuf()->str().size() - bpos - szBoundary.size() - 6);
-										req.parameters.insert(std::pair< std::string, std::string >(vName, szContent));
-										break;
-									}
-								}
+								//Its a file/stream, next line should be empty
+								pos = szContent.find("\r\n");
+								if (pos == std::string::npos)
+									return true;
+								szContent = szContent.substr(pos + 2);
 							}
+							else
+							{
+								//next line should be empty
+								if (!szContentType.empty())
+									return true;//dont know this one
+							}
+							pos = szContent.find(szBoundary);
+							if (pos == std::string::npos)
+								return true;
+							szValue = szContent.substr(0, pos - 2);
+							req.parameters.insert(std::pair< std::string, std::string >(szVariable, szValue));
+
+							szContent = szContent.substr(pos + szBoundary.size());
+							pos = szContent.find("\r\n");
+							if (pos == std::string::npos)
+								return true;
+							szContent = szContent.substr(pos + 2);
+						}
+						//we should have at least one value
+						if (req.parameters.empty())
+							return true;
+					} //if (strstr(pContent_Type, "multipart/form-data") != NULL)
+					else if (strstr(pContent_Type, "application/x-www-form-urlencoded") != NULL)
+					{
+						std::string params = req.content;
+						std::string name;
+						std::string value;
+
+						size_t q = 0;
+						size_t p = q;
+						int flag_done = 0;
+						std::string uri = params;
+						while (!flag_done)
+						{
+							q = uri.find("=", p);
+							if (q == std::string::npos)
+							{
+								break;
+							}
+							name = uri.substr(p, q - p);
+							p = q + 1;
+							q = uri.find("&", p);
+							if (q != std::string::npos)
+								value = uri.substr(p, q - p);
+							else
+							{
+								value = uri.substr(p);
+								flag_done = 1;
+							}
+							// the browser sends blanks as +
+							while (1)
+							{
+								size_t p = value.find("+");
+								if (p == std::string::npos)
+									break;
+								value.replace(p, 1, " ");
+							}
+
+							// now, url-decode only the value
+							std::string decoded;
+							request_handler::url_decode(value, decoded);
+							req.parameters.insert(std::pair< std::string, std::string >(name, decoded));
+							p = q + 1;
 						}
 					}
 				}
@@ -702,20 +790,20 @@ namespace http {
 					}
 				}
 
+				reply::add_header(&rep, "Content-Length", std::to_string(rep.content.size()));
 				if (!boost::algorithm::starts_with(strMimeType, "image"))
 				{
-					reply::add_header(&rep, "Content-Length", std::to_string(rep.content.size()));
-					reply::add_header(&rep, "Content-Type", strMimeType + ";charset=UTF-8");
+					if (!strMimeType.empty())
+						strMimeType += ";charset=UTF-8";
 					reply::add_header(&rep, "Cache-Control", "no-cache");
 					reply::add_header(&rep, "Pragma", "no-cache");
 					reply::add_header(&rep, "Access-Control-Allow-Origin", "*");
 				}
 				else
 				{
-					reply::add_header(&rep, "Content-Length", std::to_string(rep.content.size()));
-					reply::add_header(&rep, "Content-Type", strMimeType);
 					reply::add_header(&rep, "Cache-Control", "max-age=3600, public");
 				}
+				reply::add_header_content_type(&rep, strMimeType);
 				return true;
 			}
 
@@ -851,7 +939,7 @@ namespace http {
 		{
 			m_userpasswords.clear();
 
-			boost::mutex::scoped_lock lock(m_sessionsMutex);
+			std::unique_lock<std::mutex> lock(m_sessionsMutex);
 			m_sessions.clear(); //TODO : check if it is really necessary
 		}
 
@@ -869,7 +957,7 @@ namespace http {
 				if (gethostname(ac, sizeof(ac)) != SOCKET_ERROR)
 				{
 					ipnetwork.hostname = ac;
-					std::transform(ipnetwork.hostname.begin(), ipnetwork.hostname.end(), ipnetwork.hostname.begin(), ::tolower);
+					stdlower(ipnetwork.hostname);
 					m_localnetworks.push_back(ipnetwork);
 				}
 				return;
@@ -995,9 +1083,14 @@ namespace http {
 			return m_settings.listening_port;
 		}
 
+		const std::string cWebem::GetWebRoot()
+		{
+			return m_webRoot;
+		}
+
 		WebEmSession * cWebem::GetSession(const std::string & ssid)
 		{
-			boost::mutex::scoped_lock lock(m_sessionsMutex);
+			std::unique_lock<std::mutex> lock(m_sessionsMutex);
 			std::map<std::string, WebEmSession>::iterator itt = m_sessions.find(ssid);
 			if (itt != m_sessions.end())
 			{
@@ -1008,7 +1101,7 @@ namespace http {
 
 		void cWebem::AddSession(const WebEmSession & session)
 		{
-			boost::mutex::scoped_lock lock(m_sessionsMutex);
+			std::unique_lock<std::mutex> lock(m_sessionsMutex);
 			m_sessions[session.id] = session;
 		}
 
@@ -1019,7 +1112,7 @@ namespace http {
 
 		void cWebem::RemoveSession(const std::string & ssid)
 		{
-			boost::mutex::scoped_lock lock(m_sessionsMutex);
+			std::unique_lock<std::mutex> lock(m_sessionsMutex);
 			std::map<std::string, WebEmSession>::iterator itt = m_sessions.find(ssid);
 			if (itt != m_sessions.end())
 			{
@@ -1029,7 +1122,7 @@ namespace http {
 
 		int cWebem::CountSessions()
 		{
-			boost::mutex::scoped_lock lock(m_sessionsMutex);
+			std::unique_lock<std::mutex> lock(m_sessionsMutex);
 			return (int)m_sessions.size();
 		}
 
@@ -1041,7 +1134,7 @@ namespace http {
 			// Clean up timed out sessions from memory
 			std::vector<std::string> ssids;
 			{
-				boost::mutex::scoped_lock lock(m_sessionsMutex);
+				std::unique_lock<std::mutex> lock(m_sessionsMutex);
 				time_t now = mytime(NULL);
 				std::map<std::string, WebEmSession>::iterator itt;
 				for (itt = m_sessions.begin(); itt != m_sessions.end(); ++itt)
@@ -1061,7 +1154,7 @@ namespace http {
 			int after = CountSessions();
 			std::stringstream ss;
 			{
-				boost::mutex::scoped_lock lock(m_sessionsMutex);
+				std::unique_lock<std::mutex> lock(m_sessionsMutex);
 				std::map<std::string, WebEmSession>::iterator itt;
 				int i = 0;
 				for (itt = m_sessions.begin(); itt != m_sessions.end(); ++itt)
@@ -1319,7 +1412,7 @@ namespace http {
 		void cWebemRequestHandler::send_remove_cookie(reply& rep)
 		{
 			std::stringstream sstr;
-			sstr << "SID=none";
+			sstr << "DMZSID=none";
 			// RK, we removed path=/ so you can be logged in to two Domoticz's at the same time on https://my.domoticz.com/.
 			sstr << "; HttpOnly; Expires=" << make_web_time(0);
 			reply::add_header(&rep, "Set-Cookie", sstr.str(), false);
@@ -1328,15 +1421,9 @@ namespace http {
 		std::string cWebemRequestHandler::generateSessionID()
 		{
 			// Session id should not be predictable
-			boost::uuids::random_generator gen;
-			std::stringstream ss;
-			std::string randomValue;
+			std::string randomValue = GenerateUUID();
 
-			boost::uuids::uuid u = gen();
-			ss << u;
-			randomValue = ss.str();
-
-			std::string sessionId = GenerateMD5Hash(base64_encode((const unsigned char*)randomValue.c_str(), randomValue.size()));
+			std::string sessionId = GenerateMD5Hash(base64_encode(randomValue));
 
 			_log.Debug(DEBUG_WEBSERVER, "[web:%s] generate new session id token %s", myWebem->GetPort().c_str(), sessionId.c_str());
 
@@ -1346,15 +1433,9 @@ namespace http {
 		std::string cWebemRequestHandler::generateAuthToken(const WebEmSession & session, const request & req)
 		{
 			// Authentication token should not be predictable
-			boost::uuids::random_generator gen;
-			std::stringstream ss;
-			std::string randomValue;
+			std::string randomValue = GenerateUUID();
 
-			boost::uuids::uuid u = gen();
-			ss << u;
-			randomValue = ss.str();
-
-			std::string authToken = base64_encode((const unsigned char*)randomValue.c_str(), randomValue.size());
+			std::string authToken = base64_encode(randomValue);
 
 			_log.Debug(DEBUG_WEBSERVER, "[web:%s] generate new authentication token %s", myWebem->GetPort().c_str(), authToken.c_str());
 
@@ -1376,7 +1457,7 @@ namespace http {
 		void cWebemRequestHandler::send_cookie(reply& rep, const WebEmSession & session)
 		{
 			std::stringstream sstr;
-			sstr << "SID=" << session.id << "_" << session.auth_token << "." << session.expires;
+			sstr << "DMZSID=" << session.id << "_" << session.auth_token << "." << session.expires;
 			sstr << "; HttpOnly; path=/; Expires=" << make_web_time(session.expires);
 			reply::add_header(&rep, "Set-Cookie", sstr.str(), false);
 		}
@@ -1422,7 +1503,7 @@ namespace http {
 				bool bHaveGZipSupport = (strstr(encoding_header, "gzip") != NULL);
 				if (bHaveGZipSupport)
 				{
-					CA2GZIP gzip((char*)rep.content.c_str(), rep.content.size());
+					CA2GZIP gzip((char*)rep.content.c_str(), (int)rep.content.size());
 					if ((gzip.Length > 0) && (gzip.Length < (int)rep.content.size()))
 					{
 						rep.bIsGZIP = true; // flag for later
@@ -1467,18 +1548,36 @@ namespace http {
 			const char *h;
 			// client MUST include Connection: Upgrade header
 			h = request::get_req_header(&req, "Connection");
-			if (!(h && boost::iequals(h, "Upgrade")))
+			if (!h)
+			{
+				return false;
+			}
+
+/*
+			std::string connection_header = h;
+			if (!boost::iequals(connection_header, "upgrade"))
 			{
 				return false;
 			};
+*/
 			// client MUST include Upgrade: websocket
 			h = request::get_req_header(&req, "Upgrade");
-			if (!(h && boost::iequals(h, "websocket")))
+			if (!h)
+			{
+				return false;
+			}
+
+			if (!CheckAuthentication(session, req, rep))
+				return false;
+
+
+			std::string upgrade_header = h;
+			if (!boost::iequals(upgrade_header, "websocket"))
 			{
 				return false;
 			};
 			// we only have one service until now
-			if (req.uri != "/json")
+			if (req.uri.find("/json") == std::string::npos)
 			{
 				// todo: request uri could be an absolute URI as well!!!
 				rep = reply::stock_reply(reply::not_found);
@@ -1506,7 +1605,7 @@ namespace http {
 				rep = reply::stock_reply(reply::internal_server_error);
 				return true;
 			}
-			int version = boost::lexical_cast<int>(h);
+			int version = atoi(h);
 			// we support versions 13 (and higher)
 			if (version < 13)
 			{
@@ -1514,9 +1613,13 @@ namespace http {
 				return true;
 			}
 			h = request::get_req_header(&req, "Sec-Websocket-Protocol");
-			// check if a protocol is given, and it includes "domoticz".
+			// check if a protocol is given, and it includes the {websocket_protocol}.
+			if (!h)
+			{
+				return false;
+			}
 			std::string protocol_header = h;
-			if (!h || protocol_header.find("domoticz") == std::string::npos)
+			if (protocol_header.find(websocket_protocol) == std::string::npos)
 			{
 				rep = reply::stock_reply(reply::internal_server_error);
 				return true;
@@ -1540,21 +1643,23 @@ namespace http {
 				return true;
 			}
 			reply::add_header(&rep, "Sec-Websocket-Accept", accept);
-			// we only speak the domoticz subprotocol
-			reply::add_header(&rep, "Sec-Websocket-Protocol", "domoticz");
+			// we only speak the {websocket_protocol} subprotocol
+			reply::add_header(&rep, "Sec-Websocket-Protocol", websocket_protocol);
 			return true;
 		}
 
-		static void GetURICommandParameter(const std::string &uri, std::string &cmdparam)
+		static bool GetURICommandParameter(const std::string &uri, std::string &cmdparam)
 		{
-			cmdparam = uri;
+			if (uri.find("type=command") == std::string::npos)
+				return false;
 			size_t ppos1 = uri.find("&param=");
 			size_t ppos2 = uri.find("?param=");
 			if (
 				(ppos1 == std::string::npos) &&
 				(ppos2 == std::string::npos)
 				)
-				return;
+				return false;
+			cmdparam = uri;
 			size_t ppos = ppos1;
 			if (ppos == std::string::npos)
 				ppos = ppos2;
@@ -1569,6 +1674,7 @@ namespace http {
 			{
 				cmdparam = cmdparam.substr(0, ppos);
 			}
+			return true;
 		}
 
 		bool cWebemRequestHandler::CheckAuthentication(WebEmSession & session, const request& req, reply& rep)
@@ -1597,7 +1703,7 @@ namespace http {
 
 				// Parse session id and its expiration date
 				std::string scookie = cookie_header;
-				size_t fpos = scookie.find("SID=");
+				size_t fpos = scookie.find("DMZSID=");
 				if (fpos != std::string::npos)
 				{
 					scookie = scookie.substr(fpos);
@@ -1613,7 +1719,7 @@ namespace http {
 				time_t now = mytime(NULL);
 				if ((fpos != std::string::npos) && (upos != std::string::npos) && (ppos != std::string::npos))
 				{
-					sSID = scookie.substr(fpos + 4, upos - fpos - 4);
+					sSID = scookie.substr(fpos + 7, upos - fpos - 7);
 					sAuthToken = scookie.substr(upos + 1, ppos - upos - 1);
 					szTime = scookie.substr(ppos + 1);
 
@@ -1696,13 +1802,22 @@ namespace http {
 					if (myWebem->m_authmethod != AUTH_BASIC)
 					{
 						//Check if we need to bypass authentication (not when using basic-auth)
-						std::string cmdparam;
-						GetURICommandParameter(req.uri, cmdparam);
-						std::vector < std::string >::const_iterator itt;
-						for (itt = myWebem->myWhitelistURLs.begin(); itt != myWebem->myWhitelistURLs.end(); ++itt)
+						for (auto itt : myWebem->myWhitelistURLs)
 						{
-							if (cmdparam.find(*itt) == 0)
+							if (req.uri.find(itt) == 0)
+							{
 								return true;
+							}
+						}
+
+						std::string cmdparam;
+						if (GetURICommandParameter(req.uri, cmdparam))
+						{
+							for (auto itt : myWebem->myWhitelistCommands)
+							{
+								if (cmdparam.find(itt) == 0)
+									return true;
+							}
 						}
 						// Force login form
 						send_authorization_request(rep);
@@ -1748,14 +1863,22 @@ namespace http {
 			}
 
 			//Check if we need to bypass authentication (not when using basic-auth)
-			std::string cmdparam;
-			GetURICommandParameter(req.uri, cmdparam);
-			std::vector < std::string >::const_iterator itt;
-			for (itt = myWebem->myWhitelistURLs.begin(); itt != myWebem->myWhitelistURLs.end(); ++itt)
+			for (auto itt : myWebem->myWhitelistURLs)
 			{
-				if (cmdparam.find(*itt) == 0)
+				if (req.uri.find(itt) == 0)
 				{
 					return true;
+				}
+			}
+			std::string cmdparam;
+			if (GetURICommandParameter(req.uri, cmdparam))
+			{
+				for (auto itt : myWebem->myWhitelistCommands)
+				{
+					if (cmdparam.find(itt) == 0)
+					{
+						return true;
+					}
 				}
 			}
 
@@ -1942,11 +2065,11 @@ namespace http {
 				if (cookie != NULL)
 				{
 					std::string scookie = cookie;
-					int fpos = scookie.find("SID=");
-					int upos = scookie.find("_", fpos);
+					size_t fpos = scookie.find("DMZSID=");
+					size_t upos = scookie.find("_", fpos);
 					if ((fpos != std::string::npos) && (upos != std::string::npos))
 					{
-						std::string sSID = scookie.substr(fpos + 4, upos - fpos - 4);
+						std::string sSID = scookie.substr(fpos + 7, upos - fpos - 7);
 						_log.Debug(DEBUG_WEBSERVER, "Web: Logout : remove session %s", sSID.c_str());
 						std::map<std::string, WebEmSession>::iterator itt = myWebem->m_sessions.find(sSID);
 						if (itt != myWebem->m_sessions.end())
@@ -1960,6 +2083,8 @@ namespace http {
 				session.rights = -1;
 				session.forcelogin = true;
 				bCheckAuthentication = false; // do not authenticate the user, just logout
+				send_authorization_request(rep);
+				return;
 			}
 
 			// Check if this is an upgrade request to a websocket connection
@@ -1976,6 +2101,7 @@ namespace http {
 			// Copy the request to be able to fill its parameters attribute
 			request requestCopy = req;
 
+			bool bHandledAction = false;
 			// Run action if exists
 			if (isAction)
 			{
@@ -1985,7 +2111,7 @@ namespace http {
 					rep = reply::stock_reply(reply::forbidden);
 					return;
 				}
-				myWebem->CheckForAction(session, requestCopy);
+				bHandledAction = myWebem->CheckForAction(session, requestCopy);
 				if (!requestCopy.uri.empty())
 				{
 					if ((requestCopy.method == "POST") && (requestCopy.uri[0] != '/'))
@@ -2001,115 +2127,122 @@ namespace http {
 				}
 			}
 
-			modify_info mInfo;
-			if (myWebem->CheckForPageOverride(session, requestCopy, rep))
+			if (!bHandledAction)
 			{
-				if (session.reply_status != reply::ok) // forbidden
+				if (myWebem->CheckForPageOverride(session, requestCopy, rep))
 				{
-					rep = reply::stock_reply(static_cast<reply::status_type>(session.reply_status));
-					return;
-				}
+					if (rep.status == reply::status_type::download_file)
+						return;
 
-				if (!rep.bIsGZIP)
-				{
-					CompressWebOutput(req, rep);
-				}
-			}
-			else
-			{
-				if (session.reply_status != reply::ok)
-				{
-					rep = reply::stock_reply(static_cast<reply::status_type>(session.reply_status));
-					return;
-				}
-				if (rep.status != reply::ok) // bad request
-				{
-					return;
-				}
-
-				// do normal handling
-				try
-				{
-					if (requestCopy.uri.find("/images/") == 0)
+					if (session.reply_status != reply::ok) // forbidden
 					{
-						std::string theme_images_path = myWebem->m_actTheme + requestCopy.uri;
-						if (file_exist((doc_root_ + theme_images_path).c_str()))
-							requestCopy.uri = theme_images_path;
+						rep = reply::stock_reply(static_cast<reply::status_type>(session.reply_status));
+						return;
 					}
 
-					request_handler::handle_request(requestCopy, rep, mInfo);
-				}
-				catch (...)
-				{
-					rep = reply::stock_reply(reply::internal_server_error);
-					return;
-				}
-
-				// find content type header
-				std::string content_type;
-				for (unsigned int h = 0; h < rep.headers.size(); h++)
-				{
-					if (boost::iequals(rep.headers[h].name, "Content-Type"))
-					{
-						content_type = rep.headers[h].value;
-						break;
-					}
-				}
-
-				if (content_type == "text/html"
-					|| content_type == "text/plain"
-					|| content_type == "text/css"
-					|| content_type == "text/javascript"
-					|| content_type == "application/javascript"
-					)
-				{
-					// check if content is not gzipped, include won't work with non-text content
 					if (!rep.bIsGZIP)
 					{
-						// Find and include any special cWebem strings
-						if (!myWebem->Include(rep.content))
-						{
-							if (mInfo.mtime_support && !mInfo.is_modified)
-							{
-								_log.Debug(DEBUG_WEBSERVER, "[web:%s] %s not modified (1).", myWebem->GetPort().c_str(), req.uri.c_str());
-								rep = reply::stock_reply(reply::not_modified);
-								return;
-							}
-						}
-
-						// adjust content length header
-						// ( Firefox ignores this, but apparently some browsers truncate display without it.
-						// fix provided by http://www.codeproject.com/Members/jaeheung72 )
-
-						reply::add_header(&rep, "Content-Length", std::to_string(rep.content.size()));
-
-						if (!mInfo.mtime_support)
-						{
-							reply::add_header(&rep, "Last-Modified", make_web_time(mytime(NULL)), true);
-						}
-
-						//check gzip support if yes, send it back in gzip format
 						CompressWebOutput(req, rep);
 					}
-
-					// tell browser that we are using UTF-8 encoding
-					reply::add_header(&rep, "Content-Type", content_type + ";charset=UTF-8");
-				}
-				else if (mInfo.mtime_support && !mInfo.is_modified)
-				{
-					rep = reply::stock_reply(reply::not_modified);
-					_log.Debug(DEBUG_WEBSERVER, "[web:%s] %s not modified (2).", myWebem->GetPort().c_str(), req.uri.c_str());
-					return;
-				}
-				else if (content_type.find("image/") != std::string::npos)
-				{
-					//Cache images
-					reply::add_header(&rep, "Expires", make_web_time(mytime(NULL) + 3600 * 24 * 365)); // one year
 				}
 				else
 				{
-					// tell browser that we are using UTF-8 encoding
-					reply::add_header(&rep, "Content-Type", content_type + ";charset=UTF-8");
+					modify_info mInfo;
+					if (session.reply_status != reply::ok)
+					{
+						rep = reply::stock_reply(static_cast<reply::status_type>(session.reply_status));
+						return;
+					}
+					if (rep.status != reply::ok) // bad request
+					{
+						return;
+					}
+
+					// do normal handling
+					try
+					{
+						std::string uri = myWebem->ExtractRequestPath(requestCopy.uri);
+						if (uri.find("/images/") == 0)
+						{
+							std::string theme_images_path = myWebem->m_actTheme + uri;
+							if (file_exist((doc_root_ + theme_images_path).c_str()))
+								requestCopy.uri = myWebem->GetWebRoot() + theme_images_path;
+						}
+
+						request_handler::handle_request(requestCopy, rep, mInfo);
+					}
+					catch (...)
+					{
+						rep = reply::stock_reply(reply::internal_server_error);
+						return;
+					}
+
+					// find content type header
+					std::string content_type;
+					for (unsigned int h = 0; h < rep.headers.size(); h++)
+					{
+						if (boost::iequals(rep.headers[h].name, "Content-Type"))
+						{
+							content_type = rep.headers[h].value;
+							break;
+						}
+					}
+
+					if (content_type == "text/html"
+						|| content_type == "text/plain"
+						|| content_type == "text/css"
+						|| content_type == "text/javascript"
+						|| content_type == "application/javascript"
+						)
+					{
+						// check if content is not gzipped, include won't work with non-text content
+						if (!rep.bIsGZIP)
+						{
+							// Find and include any special cWebem strings
+							if (!myWebem->Include(rep.content))
+							{
+								if (mInfo.mtime_support && !mInfo.is_modified)
+								{
+									_log.Debug(DEBUG_WEBSERVER, "[web:%s] %s not modified (1).", myWebem->GetPort().c_str(), req.uri.c_str());
+									rep = reply::stock_reply(reply::not_modified);
+									return;
+								}
+							}
+
+							// adjust content length header
+							// ( Firefox ignores this, but apparently some browsers truncate display without it.
+							// fix provided by http://www.codeproject.com/Members/jaeheung72 )
+
+							reply::add_header(&rep, "Content-Length", std::to_string(rep.content.size()));
+
+							if (!mInfo.mtime_support)
+							{
+								reply::add_header(&rep, "Last-Modified", make_web_time(mytime(NULL)), true);
+							}
+
+							//check gzip support if yes, send it back in gzip format
+							CompressWebOutput(req, rep);
+						}
+
+						// tell browser that we are using UTF-8 encoding
+						reply::add_header(&rep, "Content-Type", content_type + ";charset=UTF-8");
+					}
+					else if (mInfo.mtime_support && !mInfo.is_modified)
+					{
+						rep = reply::stock_reply(reply::not_modified);
+						_log.Debug(DEBUG_WEBSERVER, "[web:%s] %s not modified (2).", myWebem->GetPort().c_str(), req.uri.c_str());
+						return;
+					}
+					else if (content_type.find("image/") != std::string::npos)
+					{
+						//Cache images
+						reply::add_header(&rep, "Expires", make_web_time(mytime(NULL) + 3600 * 24 * 365)); // one year
+					}
+					else
+					{
+						// tell browser that we are using UTF-8 encoding
+						reply::add_header(&rep, "Content-Type", content_type + ";charset=UTF-8");
+					}
 				}
 			}
 

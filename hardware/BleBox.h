@@ -19,17 +19,16 @@ public:
 	virtual ~BleBox();
 	bool WriteToHardware(const char *pdata, const unsigned char length) override;
 	int GetDeviceType(const std::string &IPAddress);
-	void AddNode(const std::string &name, const std::string &IPAddress);
+	void AddNode(const std::string &name, const std::string &IPAddress, bool reloadNodes);
 	void RemoveNode(const int id);
 	void RemoveAllNodes();
 	void SetSettings(const int pollIntervalsec);
-	void Restart();
 	void UpdateFirmware();
 	Json::Value GetApiDeviceState(const std::string &IPAddress);
 	bool DoesNodeExists(const Json::Value &root, const std::string &node);
 	bool DoesNodeExists(const Json::Value &root, const std::string &node, const std::string &value);
 	std::string GetUptime(const std::string &IPAddress);
-	void SearchNodes(const std::string &ipmask);
+	void SearchNodes(const std::string &pattern);
 private:
 	bool StartHardware() override;
 	bool StopHardware() override;
@@ -44,19 +43,20 @@ private:
 	Json::Value SendCommand(const std::string &IPAddress, const std::string &command, const int timeOut = 3);
 	void GetDevicesState();
 
-	void SendSwitch(const int NodeID, const int ChildID, const int BatteryLevel, const bool bOn, const double Level, const std::string &defaultname);
+	void SendSwitch(const int NodeID, const uint8_t ChildID, const int BatteryLevel, const bool bOn, const double Level, const std::string &defaultname);
 
 	void ReloadNodes();
 	void UnloadNodes();
 	bool LoadNodes();
 private:
-	volatile bool m_stoprequested;
 	int m_PollInterval;
-	boost::shared_ptr<boost::thread> m_thread;
+	std::shared_ptr<std::thread> m_thread;
 	std::map<const std::string, const int> m_devices;
-	boost::mutex m_mutex;
-	
+	std::mutex m_mutex;
+
 	_tColor m_RGBWColorState;
 	bool m_RGBWisWhiteState;
 	int m_RGBWbrightnessState;
+
+	bool PrepareHostList(const std::string& pattern, std::vector<std::string>& hosts);
 };

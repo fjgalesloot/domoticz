@@ -1,33 +1,31 @@
 #include "stdafx.h"
 #include "LogitechMediaServer.h"
-#include <boost/lexical_cast.hpp>
 #include "../hardware/hardwaretypes.h"
-#include "../json/json.h"
+#include "../main/json_helper.h"
 #include "../main/Helper.h"
-#include "../main/Logger.h"
-#include "../main/SQLHelper.h"
-#include "../notifications/NotificationHelper.h"
-#include "../main/WebServer.h"
-#include "../main/mainworker.h"
 #include "../main/localtime_r.h"
-#include "../webserver/cWebem.h"
+#include "../main/Logger.h"
+#include "../main/mainworker.h"
+#include "../main/SQLHelper.h"
+#include "../main/WebServer.h"
+#include "../notifications/NotificationHelper.h"
 #include "../httpclient/HTTPClient.h"
 
-CLogitechMediaServer::CLogitechMediaServer(const int ID, const std::string &IPAddress, const int Port, const std::string &User, const std::string &Pwd, const int PollIntervalsec, const int PingTimeoutms) :
+CLogitechMediaServer::CLogitechMediaServer(const int ID, const std::string &IPAddress, const int Port, const std::string &User, const std::string &Pwd, const int PollIntervalsec) :
 	m_IP(IPAddress),
 	m_User(User),
 	m_Pwd(Pwd),
-	m_stoprequested(false),
 	m_iThreadsRunning(0)
 {
 	m_HwdID = ID;
 	m_Port = Port;
 	m_bShowedStartupMessage = false;
 	m_iMissedQueries = 0;
-	SetSettings(PollIntervalsec, PingTimeoutms);
+	SetSettings(PollIntervalsec);
 }
 
-CLogitechMediaServer::CLogitechMediaServer(const int ID) : m_stoprequested(false), m_iThreadsRunning(0)
+CLogitechMediaServer::CLogitechMediaServer(const int ID) :
+	m_iThreadsRunning(0)
 {
 	m_HwdID = ID;
 	m_Port = 0;
@@ -44,7 +42,7 @@ CLogitechMediaServer::CLogitechMediaServer(const int ID) : m_stoprequested(false
 		m_Pwd = result[0][3];
 	}
 
-	SetSettings(10, 3000);
+	SetSettings(10);
 }
 
 CLogitechMediaServer::~CLogitechMediaServer(void)
@@ -67,15 +65,14 @@ Json::Value CLogitechMediaServer::Query(const std::string &sIP, const int iPort,
 
 	sPostData << sPostdata;
 
-	HTTPClient::SetTimeout(m_iPingTimeoutms / 1000);
+	HTTPClient::SetTimeout(5);
 	bool bRetVal = HTTPClient::POST(sURL.str(), sPostData.str(), ExtraHeaders, sResult);
 
 	if (!bRetVal)
 	{
 		return root;
 	}
-	Json::Reader jReader;
-	bRetVal = jReader.parse(sResult, root);
+	bRetVal = ParseJSon(sResult, root);
 	if ((!bRetVal) || (!root.isObject()))
 	{
 		size_t aFind = sResult.find("401 Authorization Required");
@@ -109,6 +106,9 @@ _eNotificationTypes	CLogitechMediaServer::NotificationType(_eMediaStatus nStatus
 bool CLogitechMediaServer::StartHardware()
 {
 	StopHardware();
+
+	RequestStart();
+
 	m_bIsStarted = true;
 	sOnConnected(this);
 	m_iThreadsRunning = 0;
@@ -117,35 +117,21 @@ bool CLogitechMediaServer::StartHardware()
 	StartHeartbeatThread();
 
 	//Start worker thread
-	m_stoprequested = false;
-	m_thread = boost::shared_ptr<boost::thread>(new boost::thread(boost::bind(&CLogitechMediaServer::Do_Work, this)));
+	m_thread = std::make_shared<std::thread>(&CLogitechMediaServer::Do_Work, this);
+	SetThreadNameInt(m_thread->native_handle());
 
-	return (m_thread != NULL);
+	return (m_thread != nullptr);
 }
 
 bool CLogitechMediaServer::StopHardware()
 {
 	StopHeartbeatThread();
 
-	try {
-		if (m_thread)
-		{
-			m_stoprequested = true;
-			m_thread->join();
-			m_thread.reset();
-
-			//Make sure all our background workers are stopped
-			int iRetryCounter = 0;
-			while ((m_iThreadsRunning > 0) && (iRetryCounter < 15))
-			{
-				sleep_milliseconds(500);
-				iRetryCounter++;
-			}
-		}
-	}
-	catch (...)
+	if (m_thread)
 	{
-		//Don't throw from a Stop command
+		RequestStop();
+		m_thread->join();
+		m_thread.reset();
 	}
 	m_bIsStarted = false;
 	return true;
@@ -153,6 +139,8 @@ bool CLogitechMediaServer::StopHardware()
 
 void CLogitechMediaServer::UpdateNodeStatus(const LogitechMediaServerNode &Node, const _eMediaStatus nStatus, const std::string &sStatus, bool bPingOK)
 {
+	//This has to be rebuild! No direct poking in the database, please use CMainWorker::UpdateDevice
+
 	//Find out node, and update it's status
 	std::vector<LogitechMediaServerNode>::iterator itt;
 	for (itt = m_nodes.begin(); itt != m_nodes.end(); ++itt)
@@ -183,7 +171,6 @@ void CLogitechMediaServer::UpdateNodeStatus(const LogitechMediaServerNode &Node,
 				localtime_r(&atime, &ltime);
 				char szLastUpdate[40];
 				sprintf(szLastUpdate, "%04d-%02d-%02d %02d:%02d:%02d", ltime.tm_year + 1900, ltime.tm_mon + 1, ltime.tm_mday, ltime.tm_hour, ltime.tm_min, ltime.tm_sec);
-				std::vector<std::vector<std::string> > result;
 				result = m_sql.safe_query("UPDATE DeviceStatus SET nValue=%d, sValue='%q', LastUpdate='%q' WHERE (HardwareID == %d) AND (DeviceID == '%q') AND (Unit == 1) AND (SwitchType == %d)",
 					int(nStatus), sStatus.c_str(), szLastUpdate, m_HwdID, itt->szDevID, STYPE_Media);
 
@@ -194,7 +181,7 @@ void CLogitechMediaServer::UpdateNodeStatus(const LogitechMediaServerNode &Node,
 					std::string sLongStatus = Media_Player_States(nStatus);
 					if ((nStatus == MSTAT_PLAYING) || (nStatus == MSTAT_PAUSED) || (nStatus == MSTAT_STOPPED))
 						if (sShortStatus.length()) sLongStatus += " - " + sShortStatus;
-					result = m_sql.safe_query("INSERT INTO LightingLog (DeviceRowID, nValue, sValue) VALUES (%d, %d, '%q')", itt->ID, int(nStatus), sLongStatus.c_str());
+					result = m_sql.safe_query("INSERT INTO LightingLog (DeviceRowID, nValue, sValue, User) VALUES (%d, %d, '%q','%q')", itt->ID, int(nStatus), sLongStatus.c_str(), "Logitech");
 				}
 
 				// 3:	Trigger On/Off actions
@@ -326,9 +313,8 @@ void CLogitechMediaServer::Do_Work()
 	//Mark devices as 'Unused'
 	m_sql.safe_query("UPDATE WOLNodes SET Timeout=-1 WHERE (HardwareID==%d)", m_HwdID);
 
-	while (!m_stoprequested)
+	while (!IsStopRequested(500))
 	{
-		sleep_milliseconds(500);
 		mcounter++;
 		if (mcounter == 2)
 		{
@@ -336,7 +322,7 @@ void CLogitechMediaServer::Do_Work()
 			scounter++;
 			if ((scounter >= m_iPollInterval) || (bFirstTime))
 			{
-				boost::lock_guard<boost::mutex> l(m_mutex);
+				std::lock_guard<std::mutex> l(m_mutex);
 
 				scounter = 0;
 				bFirstTime = false;
@@ -346,18 +332,25 @@ void CLogitechMediaServer::Do_Work()
 				std::vector<LogitechMediaServerNode>::const_iterator itt;
 				for (itt = m_nodes.begin(); itt != m_nodes.end(); ++itt)
 				{
-					if (m_stoprequested)
+					if (IsStopRequested(0))
 						return;
 					if (m_iThreadsRunning < 1000)
 					{
 						m_iThreadsRunning++;
 						boost::thread t(boost::bind(&CLogitechMediaServer::Do_Node_Work, this, *itt));
+						SetThreadName(t.native_handle(), "LogitechNode");
 						t.join();
 					}
 				}
 			}
 		}
 	}
+	//Make sure all our background workers are stopped
+	while (m_iThreadsRunning > 0)
+	{
+		sleep_milliseconds(150);
+	}
+
 	_log.Log(LOG_STATUS, "Logitech Media Server: Worker stopped...");
 }
 
@@ -415,7 +408,8 @@ void CLogitechMediaServer::GetPlayerInfo()
 						(model == "fab4") ||				//Squeezebox Touch
 						(model == "iPengiPod") ||			//iPeng iPhone App
 						(model == "iPengiPad") ||			//iPeng iPad App
-						(model == "squeezelite")			//Max2Play SqueezePlug
+						(model == "squeezelite") ||			//Max2Play SqueezePlug
+						(model == "daphile")				//Audiophile Music Server & Player OS
 						)
 					{
 						UpsertPlayer(name, ip, macaddress);
@@ -499,25 +493,16 @@ void CLogitechMediaServer::UpsertPlayer(const std::string &Name, const std::stri
 	ReloadNodes();
 }
 
-void CLogitechMediaServer::SetSettings(const int PollIntervalsec, const int PingTimeoutms)
+void CLogitechMediaServer::SetSettings(const int PollIntervalsec)
 {
 	//Defaults
 	m_iPollInterval = 30;
-	m_iPingTimeoutms = 1000;
 
 	if (PollIntervalsec > 1)
 		m_iPollInterval = PollIntervalsec;
-	if ((PingTimeoutms / 1000 < m_iPollInterval) && (PingTimeoutms != 0))
-		m_iPingTimeoutms = PingTimeoutms;
 }
 
-void CLogitechMediaServer::Restart()
-{
-	StopHardware();
-	StartHardware();
-}
-
-bool CLogitechMediaServer::WriteToHardware(const char *pdata, const unsigned char length)
+bool CLogitechMediaServer::WriteToHardware(const char *pdata, const unsigned char /*length*/)
 {
 	const tRBUF *pSen = reinterpret_cast<const tRBUF*>(pdata);
 
@@ -824,11 +809,9 @@ namespace http {
 			}
 			std::string hwid = request::findValue(&req, "idx");
 			std::string mode1 = request::findValue(&req, "mode1");
-			std::string mode2 = request::findValue(&req, "mode2");
 			if (
 				(hwid == "") ||
-				(mode1 == "") ||
-				(mode2 == "")
+				(mode1 == "")
 				)
 				return;
 			int iHardwareID = atoi(hwid.c_str());
@@ -843,14 +826,13 @@ namespace http {
 			root["title"] = "LMSSetMode";
 
 			int iMode1 = atoi(mode1.c_str());
-			int iMode2 = atoi(mode2.c_str());
 
-			m_sql.safe_query("UPDATE Hardware SET Mode1=%d, Mode2=%d WHERE (ID == '%q')", iMode1, iMode2, hwid.c_str());
-			pHardware->SetSettings(iMode1, iMode2);
+			m_sql.safe_query("UPDATE Hardware SET Mode1=%d WHERE (ID == '%q')", iMode1, hwid.c_str());
+			pHardware->SetSettings(iMode1);
 			pHardware->Restart();
 		}
 
-		void CWebServer::Cmd_LMSDeleteUnusedDevices(WebEmSession & session, const request& req, Json::Value &root)
+		void CWebServer::Cmd_LMSDeleteUnusedDevices(WebEmSession & session, const request& req, Json::Value &/*root*/)
 		{
 			if (session.rights != 2)
 			{
@@ -908,7 +890,7 @@ namespace http {
 			}
 		}
 
-		void CWebServer::Cmd_LMSGetPlaylists(WebEmSession & session, const request& req, Json::Value &root)
+		void CWebServer::Cmd_LMSGetPlaylists(WebEmSession & /*session*/, const request& req, Json::Value &root)
 		{
 			std::string hwid = request::findValue(&req, "idx");
 			if (hwid == "")
@@ -936,7 +918,7 @@ namespace http {
 			}
 		}
 
-		void CWebServer::Cmd_LMSMediaCommand(WebEmSession & session, const request& req, Json::Value &root)
+		void CWebServer::Cmd_LMSMediaCommand(WebEmSession & /*session*/, const request& req, Json::Value &root)
 		{
 			std::string sIdx = request::findValue(&req, "idx");
 			std::string sAction = request::findValue(&req, "action");

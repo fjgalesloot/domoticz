@@ -1,13 +1,12 @@
 #include "stdafx.h"
 #include "RAVEn.h"
 #include "../main/Helper.h"
-#include "../main/Logger.h"
-#include "hardwaretypes.h"
-#include "../main/RFXtrx.h"
 #include "../main/localtime_r.h"
+#include "../main/Logger.h"
 #include "../main/mainworker.h"
-
-#include <tinyxml.h>
+#include "../main/RFXtrx.h"
+#include "../tinyxpath/tinyxml.h"
+#include "hardwaretypes.h"
 
 //Rainforest RAVEn USB ZigBee Smart Meter Adapter
 //https://rainforestautomation.com/rfa-z106-raven/
@@ -24,7 +23,8 @@ RAVEn::~RAVEn(void)
 
 bool RAVEn::StartHardware()
 {
-    StartHeartbeatThread();
+	RequestStart();
+
     //Try to open the Serial Port
     try
     {
@@ -50,6 +50,8 @@ bool RAVEn::StartHardware()
     m_bIsStarted = true;
     sOnConnected(this);
 
+	StartHeartbeatThread();
+
     return true;
 }
 
@@ -63,7 +65,6 @@ bool RAVEn::StopHardware()
 
 void RAVEn::readCallback(const char *indata, size_t inlen)
 {
-    boost::lock_guard<boost::mutex> l(readQueueMutex);
     if (!m_bEnableReceive)
         return; //receiving not enabled
 

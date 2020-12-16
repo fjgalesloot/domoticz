@@ -15,6 +15,8 @@
 #pragma once
 
 #include "EvohomeBase.h"
+#include <condition_variable>
+#include <boost/thread/thread_time.hpp>
 
 #define EVOHOME_RETRY_DELAY 30
 
@@ -41,6 +43,7 @@ protected:
 	virtual void Do_Work() = 0;
 	virtual void Do_Send(std::string str) = 0;
 	virtual void Idle_Work();
+	void UpdateSwitch(const unsigned char Idx, const bool bOn, const std::string &defaultname);
 private:
 	typedef boost::function< bool(CEvohomeMsg &msg) > fnc_evohome_decode;
 	void Send();
@@ -76,6 +79,8 @@ private:
 	bool DecodeSysInfo(CEvohomeMsg &msg);
 	bool DecodeZoneName(CEvohomeMsg &msg);
 	bool DecodeHeatDemand(CEvohomeMsg &msg);
+	bool DecodeOpenThermBridge(CEvohomeMsg &msg);
+        bool DecodeOpenThermSetpoint(CEvohomeMsg &msg);
 	bool DecodeZoneInfo(CEvohomeMsg &msg);
 	bool DecodeBinding(CEvohomeMsg &msg);
 	bool DecodeActuatorState(CEvohomeMsg &msg);
@@ -84,6 +89,7 @@ private:
 	bool DecodeExternalSensor(CEvohomeMsg &msg);
 	bool DecodeDeviceInfo(CEvohomeMsg &msg);
 	bool DecodeBatteryInfo(CEvohomeMsg &msg);
+	bool DecodeSync(CEvohomeMsg &msg);
 	bool DumpMessage(CEvohomeMsg &msg);
 
 	void AddSendQueue(const CEvohomeMsg &msg);
@@ -96,15 +102,13 @@ private:
 	void SendRelayHeatDemand(uint8_t nDevNo, uint8_t nDemand);
 	void UpdateRelayHeatDemand(uint8_t nDevNo, uint8_t nDemand);
 protected:
-	volatile bool m_stoprequested;
-	boost::shared_ptr<boost::thread> m_thread;
+	std::shared_ptr<std::thread> m_thread;
 	int m_retrycntr;
 	int m_nBufPtr;
-	bool m_bDoRestart;
 
 	unsigned int MultiControllerID[5];
 	bool AllSensors;
-	boost::mutex m_mtxRelayCheck;
+	std::mutex m_mtxRelayCheck;
 	tmap_relay_check m_RelayCheck;
 
 	bool startup;
@@ -125,13 +129,13 @@ protected:
 
 	std::map < unsigned int, fnc_evohome_decode > m_Decoders;
 	std::list < CEvohomeMsg > m_SendQueue;
-	boost::mutex m_mtxSend;
+	std::mutex m_mtxSend;
 	int m_nSendFail;
 
 	unsigned int m_nBindID;//device ID of bound device
 	unsigned char m_nBindIDType;//what type of device to bind
-	boost::mutex m_mtxBindNotify;
-	boost::condition_variable m_cndBindNotify;
+	std::mutex m_mtxBindNotify;
+	std::condition_variable m_cndBindNotify;
 
 	unsigned int m_UControllerID;
 

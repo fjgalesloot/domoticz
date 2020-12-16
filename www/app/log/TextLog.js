@@ -1,27 +1,41 @@
-define(['app', 'log/components'], function (app) {
-    app.controller('DeviceTextLogController', function ($routeParams, domoticzApi, deviceApi, permissions) {
+define(['app', 'log/components/DeviceTextLogTable'], function(app) {
+
+    app.component('deviceTextLog', {
+        bindings: {
+            deviceIdx: '<'
+        },
+        templateUrl: 'app/log/TextLog.html',
+        controller: DeviceTextLogController,
+        controllerAs: 'vm',
+    });
+
+    function DeviceTextLogController($scope, $routeParams, domoticzApi, deviceApi, permissions) {
         var vm = this;
 
+        vm.autoRefresh = true;
         vm.clearLog = clearLog;
-
-        init();
+        vm.$onInit = init;
 
         function init() {
-            vm.deviceIdx = $routeParams.id;
-
-            deviceApi.getDeviceInfo(vm.deviceIdx).then(function (device) {
-                vm.pageName = device.Name;
-            });
-
             refreshLog();
+
+            $scope.$on('device_update', function(event, device) {
+                if (vm.autoRefresh && device.idx === vm.deviceIdx) {
+                    refreshLog();
+                }
+            });
         }
 
         function refreshLog() {
             domoticzApi.sendRequest({
                 type: 'textlog',
                 idx: vm.deviceIdx
-            }).then(function (data) {
-                vm.log = data.result
+            }).then(function(data) {
+                for (var i = 0; i < data.result.length; i++) {
+                    var dataTemp = data.result[i]['Data'].replace(/([^>\r\n]?)(\r\n|\n\r|\r|\n)/g, '$1<br />$2');
+                    data.result[i]['Data'] = dataTemp;
+                }
+                vm.log = data.result;
             });
         }
 
@@ -33,7 +47,7 @@ define(['app', 'log/components'], function (app) {
                 return;
             }
 
-            bootbox.confirm($.t('Are you sure to delete the Log?\n\nThis action can not be undone!'), function (result) {
+            bootbox.confirm($.t('Are you sure to delete the Log?\n\nThis action can not be undone!'), function(result) {
                 if (result !== true) {
                     return;
                 }
@@ -43,11 +57,11 @@ define(['app', 'log/components'], function (app) {
                         idx: vm.deviceIdx
                     })
                     .then(refreshLog)
-                    .catch(function () {
+                    .catch(function() {
                         HideNotify();
                         ShowNotify($.t('Problem clearing the Log!'), 2500, true);
                     });
             });
         }
-    });
+    }
 });
